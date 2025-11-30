@@ -1,73 +1,89 @@
-# React + TypeScript + Vite
+# SplitEase
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+SplitEase is a modern expense splitting application designed to make sharing costs with friends and groups easy and transparent. It features a premium UI, real-time data synchronization, and a robust backend.
 
-Currently, two official plugins are available:
+## 🚀 Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+**Frontend:**
+*   **React** (Vite)
+*   **Tailwind CSS** (Styling)
+*   **Framer Motion** (Animations)
+*   **Supabase Auth** (Authentication)
+*   **Lucide React** (Icons)
 
-## React Compiler
+**Backend:**
+*   **Cloudflare Workers** (Serverless Compute)
+*   **Express.js** (API Framework via `cloudflare:node`)
+*   **Supabase** (PostgreSQL Database & Auth)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 📂 Project Structure
 
-## Expanding the ESLint configuration
+This project is a **Monorepo** managed via npm workspaces:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+*   `src/`: Frontend React application.
+*   `express-SplitEase-app/`: Backend Cloudflare Worker application.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## 🛠️ Prerequisites
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+*   Node.js (v18+)
+*   npm
+*   Wrangler CLI (`npm install -g wrangler`)
+*   A Supabase project
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## ⚙️ Setup
+
+### 1. Clone the repository
+```bash
+git clone <repository-url>
+cd SplitEase
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 2. Install Dependencies
+```bash
+npm install
 ```
+
+### 3. Configure Environment Variables
+
+**Frontend (`.env`):**
+Create a `.env` file in the root directory:
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+**Backend (`express-SplitEase-app/.dev.vars`):**
+Create a `.dev.vars` file in the `express-SplitEase-app` directory for local development:
+```env
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+> **Note:** For production deployment, use `wrangler secret put` to set these variables.
+
+## 🏃‍♂️ Running the App
+
+Start both the frontend and backend with a single command:
+
+```bash
+npm run go
+```
+
+*   **Frontend:** http://localhost:5173
+*   **Backend:** http://localhost:8787
+
+## 📜 API Endpoints
+
+The backend exposes the following API endpoints (protected by Supabase Auth):
+
+*   `GET /api/friends` - List all friends
+*   `POST /api/friends` - Add a new friend
+*   `GET /api/groups` - List all groups
+*   `POST /api/groups` - Create a new group
+*   `GET /api/expenses` - List all expenses
+*   `POST /api/expenses` - Add a new expense
+*   `POST /api/transactions/settle-up` - Settle debts
+
+## 📄 License
+
+MIT
