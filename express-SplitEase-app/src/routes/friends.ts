@@ -4,6 +4,7 @@ import { authMiddleware } from '../middleware/auth';
 import { createSupabaseClient } from '../supabase';
 
 const router = express.Router();
+router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();

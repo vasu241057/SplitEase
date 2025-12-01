@@ -14,8 +14,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Auth Middleware (applied to /api routes)
-app.use('/api', authMiddleware);
+// Auth Middleware (applied individually in routes)
+// app.use('/api', authMiddleware);
 
 // Routes
 app.use('/api/user', userRoutes);

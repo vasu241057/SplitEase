@@ -2,7 +2,10 @@ import express from 'express';
 import { createSupabaseClient } from '../supabase';
 import { recalculateBalances } from '../utils/recalculate';
 
+import { authMiddleware } from '../middleware/auth';
+
 const router = express.Router();
+router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
