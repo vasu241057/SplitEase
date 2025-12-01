@@ -1,33 +1,41 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabase';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '../components/ui/card';
 import { Chrome } from 'lucide-react';
 
-export const Login: React.FC = () => {
+export const Signup: React.FC = () => {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const [success, setSuccess] = useState<string | null>(null);
+  // const navigate = useNavigate();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setSuccess(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          full_name: name,
+        },
+      },
     });
 
     if (error) {
       setError(error.message);
     } else {
-      navigate('/friends');
+      setSuccess('Check your email for the confirmation link!');
     }
     setLoading(false);
   };
@@ -52,9 +60,9 @@ export const Login: React.FC = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-md border-border">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
+          <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
           <CardDescription>
-            Enter your email to sign in to your account
+            Enter your email below to create your account
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -63,11 +71,16 @@ export const Login: React.FC = () => {
               {error}
             </div>
           )}
+          {success && (
+            <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-md text-sm">
+              {success}
+            </div>
+          )}
           
           <div className="grid gap-2">
             <Button variant="outline" onClick={handleGoogleLogin} disabled={loading} className="w-full">
               <Chrome className="mr-2 h-4 w-4" />
-              Sign in with Google
+              Sign up with Google
             </Button>
           </div>
 
@@ -82,7 +95,19 @@ export const Login: React.FC = () => {
             </div>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleSignUp} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Full Name</Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="John Doe"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                disabled={loading}
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -107,15 +132,15 @@ export const Login: React.FC = () => {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Loading...' : 'Sign In'}
+              {loading ? 'Creating account...' : 'Create account'}
             </Button>
           </form>
         </CardContent>
         <CardFooter>
           <div className="text-sm text-center w-full text-muted-foreground">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-primary hover:underline font-medium">
-              Sign Up
+            Already have an account?{' '}
+            <Link to="/login" className="text-primary hover:underline font-medium">
+              Sign In
             </Link>
           </div>
         </CardFooter>

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Search, Receipt, IndianRupee, User as UserIcon, Check, Users, ChevronRight, X } from "lucide-react"
+import { ArrowLeft, Receipt, IndianRupee, User as UserIcon, Check, Users, X } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -25,7 +25,7 @@ export function AddExpense() {
   const [description, setDescription] = useState("")
   const [amount, setAmount] = useState("")
   
-  const [splitMode, setSplitMode] = useState<SplitMode>("you-equal")
+  const [splitMode] = useState<SplitMode>("you-equal")
   const [groupPayers, setGroupPayers] = useState<string[]>(["currentUser"])
   const [groupSplitMembers, setGroupSplitMembers] = useState<string[]>([])
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({})
@@ -296,7 +296,7 @@ export function AddExpense() {
       payerId = groupPayers[0]
     }
 
-    const owedPerPerson = numAmount / groupSplitMembers.length
+    // const owedPerPerson = numAmount / groupSplitMembers.length
     const allUserIds = Array.from(new Set([...groupPayers, ...groupSplitMembers]))
 
     // Rounding Logic

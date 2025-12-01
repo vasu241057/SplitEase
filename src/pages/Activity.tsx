@@ -9,7 +9,12 @@ export function Activity() {
   const { allExpenses, transactions } = useData()
 
   // Combine and sort activities
-  const activities = [
+  type ActivityItem = (
+    | (typeof allExpenses[0] & { type: 'expense' })
+    | (typeof transactions[0] & { type: 'payment' })
+  ) & { deleted?: boolean }
+
+  const activities: ActivityItem[] = [
     ...allExpenses.map(e => ({ ...e, type: 'expense' as const })),
     ...transactions.map(t => ({ ...t, type: 'payment' as const }))
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())

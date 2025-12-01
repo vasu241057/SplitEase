@@ -1,11 +1,21 @@
 import { Moon, Sun, Globe, Info } from "lucide-react"
 import { useTheme } from "../context/ThemeContext"
+import { useAuth } from "../context/AuthContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
 import { Avatar, AvatarFallback } from "../components/ui/avatar"
 
 export function Settings() {
   const { theme, setTheme } = useTheme()
+  const { signOut, user } = useAuth()
+
+  const handleLogout = async () => {
+    try {
+      await signOut()
+    } catch (error) {
+      console.error("Failed to log out", error)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -13,11 +23,13 @@ export function Settings() {
 
       <div className="flex items-center gap-4 py-4">
         <Avatar className="h-16 w-16">
-          <AvatarFallback className="text-xl">YO</AvatarFallback>
+          <AvatarFallback className="text-xl">
+            {user?.email ? user.email[0].toUpperCase() : "U"}
+          </AvatarFallback>
         </Avatar>
         <div>
           <h2 className="text-xl font-bold">You</h2>
-          <p className="text-muted-foreground">user@example.com</p>
+          <p className="text-muted-foreground">{user?.email || "user@example.com"}</p>
         </div>
       </div>
 
@@ -77,7 +89,7 @@ export function Settings() {
         </Card>
 
         <div className="pt-4">
-          <Button variant="destructive" className="w-full">
+          <Button variant="destructive" className="w-full" onClick={handleLogout}>
             Log Out
           </Button>
         </div>
