@@ -47,17 +47,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [friendsRes, groupsRes, expensesRes, transactionsRes] = await Promise.all([
+        const [friendsData, groupsData, expensesData, transactionsData] = await Promise.all([
           api.get('/api/friends'),
           api.get('/api/groups'),
           api.get('/api/expenses'),
           api.get('/api/transactions')
         ])
-
-        const friendsData = await friendsRes.json()
-        const groupsData = await groupsRes.json()
-        const expensesData = await expensesRes.json()
-        const transactionsData = await transactionsRes.json()
 
         setFriends(friendsData)
         setGroups(groupsData)
@@ -82,8 +77,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setAllExpenses(prev => [newExpense, ...prev])
         
         // Refresh friends to update balances
-        const friendsRes = await api.get('/api/friends')
-        if (friendsRes.ok) setFriends(await friendsRes.json())
+        // Refresh friends to update balances
+        const friendsData = await api.get('/api/friends')
+        setFriends(friendsData)
       }
     } catch (error) {
       console.error("Failed to add expense:", error)
@@ -146,8 +142,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setTransactions((prev) => [...prev, newTransaction])
 
         // Refresh friends to update balances
-        const friendsRes = await api.get('/api/friends')
-        if (friendsRes.ok) setFriends(await friendsRes.json())
+        // Refresh friends to update balances
+        const friendsData = await api.get('/api/friends')
+        setFriends(friendsData)
       }
     } catch (error) {
       console.error("Failed to settle up:", error)
@@ -161,8 +158,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setAllExpenses((prev: Expense[]) => prev.map(e => e.id === id ? { ...e, deleted: true } : e))
         
         // Refresh friends to update balances
-        const friendsRes = await api.get('/api/friends')
-        if (friendsRes.ok) setFriends(await friendsRes.json())
+        // Refresh friends to update balances
+        const friendsData = await api.get('/api/friends')
+        setFriends(friendsData)
       }
     } catch (error) {
       console.error("Failed to delete expense:", error)
@@ -177,8 +175,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setAllExpenses(prev => prev.map(e => e.id === id ? { ...e, deleted: false } : e))
         
         // Refresh friends to update balances
-        const friendsRes = await api.get('/api/friends')
-        if (friendsRes.ok) setFriends(await friendsRes.json())
+        // Refresh friends to update balances
+        const friendsData = await api.get('/api/friends')
+        setFriends(friendsData)
       }
     } catch (error) {
       console.error("Failed to restore expense:", error)
@@ -217,8 +216,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
          if (res) {
             const updated = res
            setAllExpenses((prev: Expense[]) => prev.map(e => e.id === expense.id ? updated : e))
-           const friendsRes = await api.get('/api/friends')
-           if (friendsRes.ok) setFriends(await friendsRes.json())
+           const friendsData = await api.get('/api/friends')
+           setFriends(friendsData)
         }
      } catch (error) {
         console.error("Failed to update expense", error)

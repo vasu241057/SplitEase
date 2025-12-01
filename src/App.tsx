@@ -13,6 +13,8 @@ import { ExpenseDetail } from "./pages/ExpenseDetail"
 import { CreateGroup } from "./pages/CreateGroup"
 import { Login } from "./pages/Login"
 import { Signup } from "./pages/Signup"
+import { InviteFriend } from "./pages/InviteFriend"
+import { AcceptInvite } from "./pages/AcceptInvite"
 
 import { ToastProvider } from "./context/ToastContext"
 import { ToastContainer } from "./components/ui/Toast"
@@ -44,8 +46,10 @@ function App() {
         <Routes location={backgroundLocation}>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/invite/:code" element={<AcceptInvite />} />
           
           <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
+            <Route path="/invite-friend" element={<InviteFriend />} />
             <Route path="/" element={<Navigate to="/friends" replace />} />
             <Route path="/settle-up" element={<SettleUp />} />
             <Route path="/create-group" element={<CreateGroup />} />

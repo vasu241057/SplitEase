@@ -1,6 +1,7 @@
 import { httpServerHandler } from 'cloudflare:node';
 import express from 'express';
 import cors from 'cors';
+import userRoutes from './routes/user';
 import friendsRoutes from './routes/friends';
 import groupsRoutes from './routes/groups';
 import expensesRoutes from './routes/expenses';
@@ -17,6 +18,7 @@ app.use(express.json());
 app.use('/api', authMiddleware);
 
 // Routes
+app.use('/api/user', userRoutes);
 app.use('/api/friends', friendsRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/api/expenses', expensesRoutes);

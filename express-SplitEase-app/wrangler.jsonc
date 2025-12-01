@@ -29,8 +29,7 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
 	"vars": {
-		"SUPABASE_URL": "https://dtbwihnouannkbbfkfhr.supabase.co",
-		"SUPABASE_SERVICE_ROLE_KEY": "sb_secret_JuuEhQK6em6zbyidz_leVA_owb94cpr"
+		"SUPABASE_URL": "https://dtbwihnouannkbbfkfhr.supabase.co"
 	}
 	/**
 	 * Note: Use secrets to store sensitive data.

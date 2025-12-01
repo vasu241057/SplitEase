@@ -43,10 +43,13 @@ export const Signup: React.FC = () => {
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
+    const redirectUrl = `${window.location.origin}/friends`;
+    console.log('OAuth Redirect URL:', redirectUrl);
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/friends`,
+        redirectTo: redirectUrl,
       },
     });
 
