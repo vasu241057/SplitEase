@@ -13,10 +13,13 @@ const getAuthHeaders = async () => {
   return headers;
 };
 
+const BASE_URL = import.meta.env.VITE_API_URL || '';
+
 export const api = {
   get: async (url: string) => {
     const headers = await getAuthHeaders();
-    const res = await fetch(url, { headers });
+    const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+    const res = await fetch(fullUrl, { headers });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || `Request failed with status ${res.status}`);
@@ -26,7 +29,8 @@ export const api = {
 
   post: async (url: string, body: any) => {
     const headers = await getAuthHeaders();
-    const res = await fetch(url, {
+    const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+    const res = await fetch(fullUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -40,7 +44,8 @@ export const api = {
 
   put: async (url: string, body: any) => {
     const headers = await getAuthHeaders();
-    const res = await fetch(url, {
+    const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+    const res = await fetch(fullUrl, {
       method: 'PUT',
       headers,
       body: JSON.stringify(body),
@@ -54,7 +59,8 @@ export const api = {
 
   delete: async (url: string) => {
     const headers = await getAuthHeaders();
-    const res = await fetch(url, {
+    const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+    const res = await fetch(fullUrl, {
       method: 'DELETE',
       headers,
     });
