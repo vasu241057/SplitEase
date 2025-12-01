@@ -12,14 +12,16 @@ export function InviteFriend() {
   // const { user } = useAuth();
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
         const profile = await api.get('/api/user/profile');
         setInviteCode(profile.invite_code);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch profile:', error);
+        setError(error.message || 'Failed to load profile');
       }
     };
     fetchProfile();
@@ -28,27 +30,11 @@ export function InviteFriend() {
   const inviteUrl = inviteCode ? `${window.location.origin}/invite/${inviteCode}` : '';
 
   const handleShare = async () => {
-    if (navigator.share && inviteUrl) {
-      try {
-        await navigator.share({
-          title: 'Join me on SplitEase',
-          text: 'Let\'s split expenses easily! Add me as a friend:',
-          url: inviteUrl,
-        });
-      } catch (error) {
-        console.error('Error sharing:', error);
-      }
-    } else {
-      handleCopy();
-    }
+    // ... existing code ...
   };
 
   const handleCopy = () => {
-    if (inviteUrl) {
-      navigator.clipboard.writeText(inviteUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    // ... existing code ...
   };
 
   return (
@@ -67,6 +53,11 @@ export function InviteFriend() {
           <p className="text-muted-foreground">
             Ask your friend to scan this code to add you instantly.
           </p>
+          {error && (
+            <p className="text-red-500 text-sm bg-red-50 p-2 rounded">
+              Error: {error}
+            </p>
+          )}
         </div>
 
         <Card className="p-8 bg-white rounded-3xl shadow-lg">

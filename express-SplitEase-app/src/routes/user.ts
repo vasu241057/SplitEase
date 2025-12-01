@@ -42,6 +42,44 @@ router.get('/profile', authMiddleware, async (req, res) => {
   }
 });
 
+// Update user profile
+router.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const supabase = createSupabaseClient();
+    const userId = (req as any).user.id;
+    const { full_name } = req.body;
+
+    if (!full_name) {
+      return res.status(400).json({ error: 'Full name is required' });
+    }
+
+    // 1. Update Profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .update({ full_name })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (profileError) throw profileError;
+
+    // 2. Propagate to Friends table (where this user is a friend)
+    const { error: friendsError } = await supabase
+      .from('friends')
+      .update({ name: full_name })
+      .eq('linked_user_id', userId);
+
+    if (friendsError) {
+      console.error('Failed to propagate name change to friends:', friendsError);
+      // Don't fail the request, just log it
+    }
+
+    res.json(profile);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get public profile by invite code
 router.get('/invite/:code', async (req, res) => {
   try {

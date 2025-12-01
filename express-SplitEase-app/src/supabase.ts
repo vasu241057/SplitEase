@@ -13,6 +13,11 @@ export const createSupabaseClient = () => {
     throw new Error('Missing Supabase environment variables');
   }
 
+  console.error('DEBUG: Supabase Config:', { 
+    url: SUPABASE_URL, 
+    keyLength: SUPABASE_SERVICE_ROLE_KEY?.length 
+  });
+
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
       persistSession: false,

@@ -8,7 +8,12 @@ router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
-  const { data, error } = await supabase.from('friends').select('*');
+  const userId = (req as any).user.id;
+  
+  const { data, error } = await supabase
+    .from('friends')
+    .select('*')
+    .eq('owner_id', userId);
   
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
@@ -16,11 +21,17 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   const { name, email } = req.body;
+  const userId = (req as any).user.id;
   const supabase = createSupabaseClient();
   
   const { data, error } = await supabase
     .from('friends')
-    .insert([{ name, email, balance: 0 }])
+    .insert([{ 
+      name, 
+      email, 
+      balance: 0,
+      owner_id: userId
+    }])
     .select()
     .single();
 
