@@ -30,11 +30,31 @@ export function InviteFriend() {
   const inviteUrl = inviteCode ? `${window.location.origin}/invite/${inviteCode}` : '';
 
   const handleShare = async () => {
-    // ... existing code ...
+    if (navigator.share && inviteUrl) {
+      try {
+        await navigator.share({
+          title: 'Join me on SplitEase',
+          text: 'Join me on SplitEase to split expenses easily!',
+          url: inviteUrl,
+        });
+      } catch (err) {
+        console.error('Error sharing:', err);
+      }
+    } else {
+      handleCopy();
+    }
   };
 
-  const handleCopy = () => {
-    // ... existing code ...
+  const handleCopy = async () => {
+    if (inviteUrl) {
+      try {
+        await navigator.clipboard.writeText(inviteUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    }
   };
 
   return (
