@@ -3,8 +3,8 @@
   "short_name": "SplitEase",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "#020817",
+  "theme_color": "#020817",
   "icons": [
     {
       "src": "/logo.jpg",
