@@ -18,7 +18,7 @@ import { AcceptInvite } from "./pages/AcceptInvite"
 
 import { ToastProvider } from "./context/ToastContext"
 import { ToastContainer } from "./components/ui/Toast"
-import { AuthProvider, useAuth } from "./context/AuthContext"
+import { useAuth } from "./context/AuthContext"
 
 const RequireAuth = ({ children }: { children: React.ReactElement }) => {
   const { user, loading } = useAuth();
@@ -41,7 +41,6 @@ function App() {
   const backgroundLocation = state?.backgroundLocation || location
 
   return (
-    <AuthProvider>
       <ToastProvider>
         <Routes location={backgroundLocation}>
           <Route path="/login" element={<Login />} />
@@ -77,7 +76,6 @@ function App() {
         </AnimatePresence>
         <ToastContainer />
       </ToastProvider>
-    </AuthProvider>
   )
 }
 

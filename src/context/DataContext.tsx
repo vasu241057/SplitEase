@@ -1,6 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react"
 import { api } from '../utils/api';
+import { useAuth } from './AuthContext';
 import type { Friend, Group, Expense, Transaction } from "../types"
 
 type User = {
@@ -36,11 +37,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]) // Raw expenses including deleted
   const [transactions, setTransactions] = useState<Transaction[]>([])
 
+  const { user } = useAuth()
+
   const currentUser: User = {
-    id: "currentUser",
-    name: "You",
-    email: "user@example.com",
-    avatar: "",
+    id: user?.id || "currentUser",
+    name: user?.user_metadata?.full_name || "You",
+    email: user?.email || "user@example.com",
+    avatar: user?.user_metadata?.avatar_url || "",
   }
 
   // Fetch initial data

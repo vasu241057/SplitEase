@@ -11,7 +11,7 @@ import { useToast } from "../context/ToastContext"
 export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { allExpenses, friends, deleteExpense, restoreExpense } = useData()
+  const { allExpenses, friends, deleteExpense, restoreExpense, currentUser } = useData()
   
   const expense = allExpenses.find(e => e.id === id)
 
@@ -52,16 +52,16 @@ export function ExpenseDetail() {
   }
 
   const getMemberName = (id: string) => {
-    if (id === "currentUser") return "You"
+    if (id === "currentUser" || id === currentUser.id) return "You"
     if (!friends) return "Unknown"
-    const friend = friends.find(f => f.id === id)
+    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
     return friend ? friend.name : "Unknown"
   }
   
   const getMemberAvatar = (id: string) => {
-     if (id === "currentUser") return undefined
+     if (id === "currentUser" || id === currentUser.id) return currentUser.avatar
      if (!friends) return undefined
-     const friend = friends.find(f => f.id === id)
+     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
      return friend?.avatar
   }
 
