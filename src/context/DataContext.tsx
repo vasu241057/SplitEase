@@ -27,6 +27,7 @@ type DataContextType = {
   updateExpense: (expense: Expense) => Promise<void>
   refreshGroups: () => Promise<void>
   refreshExpenses: () => Promise<void>
+  loading: boolean
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined)
@@ -36,7 +37,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [groups, setGroups] = useState<Group[]>([])
   const [allExpenses, setAllExpenses] = useState<Expense[]>([]) // Raw expenses including deleted
   const [transactions, setTransactions] = useState<Transaction[]>([])
-
+  const [loading, setLoading] = useState(true)
   const { user } = useAuth()
 
   const currentUser: User = {
@@ -63,6 +64,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setTransactions(transactionsData)
       } catch (error) {
         console.error("Failed to fetch data:", error)
+      } finally {
+        setLoading(false)
       }
     }
 
@@ -245,6 +248,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         updateExpense,
         refreshGroups,
         refreshExpenses,
+        loading,
       }}
     >
       {children}

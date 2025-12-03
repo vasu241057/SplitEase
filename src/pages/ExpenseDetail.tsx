@@ -11,9 +11,17 @@ import { useToast } from "../context/ToastContext"
 export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { allExpenses, friends, deleteExpense, restoreExpense, currentUser } = useData()
+  const { allExpenses, friends, deleteExpense, restoreExpense, currentUser, loading } = useData()
   
   const expense = allExpenses.find(e => e.id === id)
+
+  if (loading) {
+     return (
+        <div className="flex items-center justify-center min-h-[50vh]">
+           <p className="text-muted-foreground">Loading expense details...</p>
+        </div>
+     )
+  }
 
   if (!expense) {
     return (
