@@ -15,7 +15,7 @@ type SplitMode = "you-equal" | "you-full" | "friend-equal" | "friend-full"
 export function AddExpense() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { friends, groups, addExpense, updateExpense } = useData()
+  const { friends, groups, addExpense, updateExpense, currentUser } = useData()
   
   const [step, setStep] = useState<Step>(1)
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
@@ -26,7 +26,7 @@ export function AddExpense() {
   const [amount, setAmount] = useState("")
   
   const [splitMode] = useState<SplitMode>("you-equal")
-  const [groupPayers, setGroupPayers] = useState<string[]>(["currentUser"])
+  const [groupPayers, setGroupPayers] = useState<string[]>([currentUser.id])
   const [groupSplitMembers, setGroupSplitMembers] = useState<string[]>([])
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({})
 
@@ -56,7 +56,7 @@ export function AddExpense() {
        const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members || []) : []
        const friendIds = editExp.splits
           .map((s: any) => s.userId)
-          .filter((uid: string) => uid !== "currentUser" && !groupMemberIds.includes(uid))
+          .filter((uid: string) => uid !== currentUser.id && !groupMemberIds.includes(uid))
        
        const friendsToSelect = friends.filter(f => friendIds.includes(f.id))
        setSelectedFriends(friendsToSelect)
@@ -91,7 +91,7 @@ export function AddExpense() {
     // Only run default init if NOT in edit mode and NOT initialized
     if (!location.state?.editExpense) {
         // Combine Group Members + Selected Friends
-        const members = new Set(["currentUser"])
+        const members = new Set([currentUser.id])
         if (selectedGroup) {
         selectedGroup.members.forEach(m => members.add(m))
         }
@@ -103,8 +103,8 @@ export function AddExpense() {
         // But we also don't want to reset if user is just adding friends?
         // Let's keep it simple: Default to current user if list changes significantly?
         // Actually, existing logic was fine for new expense.
-        if (groupPayers.length === 0 || (groupPayers.length === 1 && groupPayers[0] === "currentUser")) {
-             setGroupPayers(["currentUser"])
+        if (groupPayers.length === 0 || (groupPayers.length === 1 && groupPayers[0] === currentUser.id)) {
+             setGroupPayers([currentUser.id])
         }
     }
   }, [selectedGroup, selectedFriends, location.state, groups, friends])
@@ -141,8 +141,8 @@ export function AddExpense() {
   }
 
   const getMemberDetails = (id: string) => {
-    if (id === "currentUser") return { name: "You", avatar: undefined }
-    const friend = friends.find(f => f.id === id)
+    if (id === currentUser.id) return { name: "You", avatar: currentUser.avatar }
+    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
     return friend || { name: "Unknown", avatar: undefined }
   }
 
@@ -159,7 +159,7 @@ export function AddExpense() {
        // but here 'members' are IDs. Let's assume 'members' + 'currentUser'.
        // And 'selectedFriends' are extra.
        
-       const groupMemberIds = Array.from(new Set(["currentUser", ...selectedGroup.members]))
+       const groupMemberIds = Array.from(new Set([currentUser.id, ...selectedGroup.members]))
        const friendIds = selectedFriends.map(f => f.id).filter(id => !groupMemberIds.includes(id))
        const allParticipants = [...groupMemberIds, ...friendIds]
        const totalParticipants = allParticipants.length
@@ -282,7 +282,7 @@ export function AddExpense() {
 
     // Standard Logic (Single Group OR Friends)
     let splits: { userId: string, amount: number, paidAmount: number, paid: boolean }[] = []
-    let payerId = "currentUser"
+    let payerId = currentUser.id
 
     let finalPayerAmounts: Record<string, number> = {}
     
@@ -328,31 +328,40 @@ export function AddExpense() {
       }
     })
 
+    // Map friend IDs to linked_user_id if available
+    splits = splits.map(s => {
+       const friend = friends.find(f => f.id === s.userId)
+       if (friend && friend.linked_user_id) {
+          return { ...s, userId: friend.linked_user_id }
+       }
+       return s
+    })
+
     if (!selectedGroup && selectedFriends.length === 1) {
        if (step === 2 && groupPayers.length === 1 && groupPayers[0] === "currentUser" && groupSplitMembers.length === 2) {
           const friendId = selectedFriends[0].id
-          if (splitMode === "you-equal") {
+           if (splitMode === "you-equal") {
              splits = [
-              { userId: "currentUser", amount: numAmount/2, paidAmount: numAmount, paid: true },
+              { userId: currentUser.id, amount: numAmount/2, paidAmount: numAmount, paid: true },
               { userId: friendId, amount: numAmount/2, paidAmount: 0, paid: false }
              ]
           } else if (splitMode === "you-full") {
              splits = [
-              { userId: "currentUser", amount: 0, paidAmount: numAmount, paid: true },
+              { userId: currentUser.id, amount: 0, paidAmount: numAmount, paid: true },
               { userId: friendId, amount: numAmount, paidAmount: 0, paid: false }
              ]
           } else if (splitMode === "friend-equal") {
              splits = [
-              { userId: "currentUser", amount: numAmount/2, paidAmount: 0, paid: false },
+              { userId: currentUser.id, amount: numAmount/2, paidAmount: 0, paid: false },
               { userId: friendId, amount: numAmount/2, paidAmount: numAmount, paid: true }
              ]
           } else if (splitMode === "friend-full") {
              splits = [
-              { userId: "currentUser", amount: numAmount, paidAmount: 0, paid: false },
+              { userId: currentUser.id, amount: numAmount, paidAmount: 0, paid: false },
               { userId: friendId, amount: 0, paidAmount: numAmount, paid: true }
              ]
           }
-          payerId = splits.find(s => s.paid)?.userId || "currentUser"
+          payerId = splits.find(s => s.paid)?.userId || currentUser.id
        }
     }
 
@@ -380,14 +389,14 @@ export function AddExpense() {
 
   const getPaidText = () => {
     if (groupPayers.length === 1) {
-      return groupPayers[0] === "currentUser" ? "You" : getMemberDetails(groupPayers[0]).name
+      return groupPayers[0] === currentUser.id ? "You" : getMemberDetails(groupPayers[0]).name
     }
     return `${groupPayers.length} people`
   }
 
   const getSplitText = () => {
     if (groupSplitMembers.length === 1) {
-      return groupSplitMembers[0] === "currentUser" ? "only You" : getMemberDetails(groupSplitMembers[0]).name
+      return groupSplitMembers[0] === currentUser.id ? "only You" : getMemberDetails(groupSplitMembers[0]).name
     }
     let totalMembers = 0
     if (selectedGroup) totalMembers = selectedGroup.members.length + 1 + selectedFriends.length
@@ -429,7 +438,7 @@ export function AddExpense() {
   const isMultiPayerValid = Math.abs(amountLeft) < 0.01
 
   const activeMembers = useMemo(() => {
-    const members = new Set(["currentUser"])
+    const members = new Set([currentUser.id])
     if (selectedGroup) {
       selectedGroup.members.forEach(m => members.add(m))
     }

@@ -9,7 +9,7 @@ import { cn } from "../utils/cn"
 export function FriendDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { friends, expenses } = useData()
+  const { friends, expenses, currentUser } = useData()
   const friend = friends.find((f) => f.id === id)
 
   if (!friend) {
@@ -17,7 +17,7 @@ export function FriendDetail() {
   }
 
   const sharedExpenses = expenses.filter((e) =>
-    e.splits.some((s) => s.userId === friend.id)
+    e.splits.some((s) => s.userId === friend.id || (friend.linked_user_id && s.userId === friend.linked_user_id))
   )
 
   return (
@@ -103,9 +103,11 @@ export function FriendDetail() {
                   <div className="text-right">
                     <p className="font-bold">₹{expense.amount}</p>
                     <p className="text-xs text-muted-foreground">
-                      {expense.payerId === "currentUser"
+                      {expense.payerId === currentUser.id
                         ? `You paid`
-                        : `${friend.name} paid`}
+                        : expense.payerId === friend.id || (friend.linked_user_id && expense.payerId === friend.linked_user_id)
+                        ? `${friend.name} paid`
+                        : "Someone else paid"}
                     </p>
                   </div>
                 </div>

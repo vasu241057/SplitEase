@@ -12,7 +12,7 @@ import { api } from "../utils/api"
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { groups, expenses, friends, refreshGroups, refreshExpenses } = useData()
+  const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser } = useData()
   const [activeTab, setActiveTab] = useState<"expenses" | "members">("expenses")
   const [showAddMember, setShowAddMember] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -32,8 +32,8 @@ export function GroupDetail() {
   const groupExpenses = expenses.filter((e) => e.groupId === group.id)
 
   const getMemberName = (id: string) => {
-    if (id === "currentUser") return "You"
-    return friends.find((f) => f.id === id)?.name || "Unknown"
+    if (id === currentUser.id) return "You"
+    return friends.find((f) => f.id === id || f.linked_user_id === id)?.name || "Unknown"
   }
 
   // Filter friends not in group
@@ -150,7 +150,7 @@ export function GroupDetail() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {new Date(expense.date).toLocaleDateString()} •{" "}
-                        {expense.payerId === "currentUser"
+                        {expense.payerId === currentUser.id
                           ? "You paid"
                           : `${getMemberName(expense.payerId)} paid`}
                       </p>

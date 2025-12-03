@@ -6,7 +6,7 @@ import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Link } from "react-router-dom"
 
 export function Activity() {
-  const { allExpenses, transactions } = useData()
+  const { allExpenses, transactions, currentUser } = useData()
 
   // Combine and sort activities
   type ActivityItem = (
@@ -15,8 +15,12 @@ export function Activity() {
   ) & { deleted?: boolean }
 
   const activities: ActivityItem[] = [
-    ...allExpenses.map(e => ({ ...e, type: 'expense' as const })),
-    ...transactions.map(t => ({ ...t, type: 'payment' as const }))
+    ...allExpenses
+      .filter(e => e.payerId === currentUser.id || e.splits.some(s => s.userId === currentUser.id))
+      .map(e => ({ ...e, type: 'expense' as const })),
+    ...transactions
+      .filter(t => t.fromId === currentUser.id || t.toId === currentUser.id)
+      .map(t => ({ ...t, type: 'payment' as const }))
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
   return (

@@ -7,10 +7,24 @@ import { authMiddleware } from '../middleware/auth';
 const router = express.Router();
 router.use(authMiddleware);
 
+// Helper to check if ID is a Profile ID (User ID)
+const isProfileId = async (supabase: any, id: string) => {
+  if (!id || id === 'currentUser') return false;
+  // Simple check: Try to select from profiles. 
+  // Optimization: Cache this or assume UUID format distinction? 
+  // But Friend IDs are also UUIDs.
+  // We must check DB.
+  const { data } = await supabase.from('profiles').select('id').eq('id', id).single();
+  return !!data;
+};
+
 router.get('/', async (req, res) => {
+  const userId = (req as any).user.id;
   const supabase = createSupabaseClient();
+  
+  // Use RPC to filter expenses relevant to the user
   const { data, error } = await supabase
-    .from('expenses')
+    .rpc('get_user_expenses', { current_user_id: userId })
     .select('*, splits:expense_splits(*)')
     .order('date', { ascending: false });
     
@@ -41,7 +55,8 @@ router.post('/', async (req, res) => {
       description,
       amount,
       date: date || new Date().toISOString(),
-      payer_id: payerId === 'currentUser' ? null : payerId,
+      payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
+      payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
       group_id: groupId,
       deleted: false
     }])
@@ -50,13 +65,14 @@ router.post('/', async (req, res) => {
 
   if (expenseError) return res.status(500).json({ error: expenseError.message });
 
-  const splitInserts = splits.map((s: any) => ({
+  const splitInserts = await Promise.all(splits.map(async (s: any) => ({
     expense_id: expense.id,
-    friend_id: s.userId === 'currentUser' ? null : s.userId,
+    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
+    user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
     amount: s.amount,
     paid_amount: s.paidAmount || 0,
     paid: s.paid || false
-  }));
+  })));
 
   const { error: splitError } = await supabase
     .from('expense_splits')
@@ -91,7 +107,8 @@ router.put('/:id', async (req, res) => {
       description,
       amount,
       date,
-      payer_id: payerId === 'currentUser' ? null : payerId,
+      payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
+      payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
       group_id: groupId
     })
     .eq('id', id);
@@ -105,13 +122,14 @@ router.put('/:id', async (req, res) => {
 
   if (deleteError) return res.status(500).json({ error: deleteError.message });
 
-  const splitInserts = splits.map((s: any) => ({
+  const splitInserts = await Promise.all(splits.map(async (s: any) => ({
     expense_id: id,
-    friend_id: s.userId === 'currentUser' ? null : s.userId,
+    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
+    user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
     amount: s.amount,
     paid_amount: s.paidAmount || 0,
     paid: s.paid || false
-  }));
+  })));
 
   const { error: splitError } = await supabase
     .from('expense_splits')
