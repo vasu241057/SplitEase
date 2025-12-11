@@ -102,6 +102,50 @@ router.post('/:entityType/:entityId', async (req, res) => {
     }
   };
 
+  // Trigger Notification
+  const env = (req as any).env;
+  if (env) { // Use worker env
+     (async () => {
+        try {
+            let recipientIds: string[] = [];
+            const title = `New comment from ${profile?.full_name || 'Someone'}`;
+            const body = content;
+            const url = `/${entityType === 'expense' ? 'expense' : 'settle'}/${entityId}`;
+
+            if (entityType === 'expense') {
+                const { data: expense } = await supabase
+                    .from('expenses')
+                    .select('*, splits(*)')
+                    .eq('id', entityId)
+                    .single();
+                if (expense) {
+                    recipientIds = expense.splits.map((s: any) => s.user_id);
+                }
+            } else if (entityType === 'payment') {
+                const { data: transaction } = await supabase
+                    .from('transactions')
+                    .select('*')
+                    .eq('id', entityId)
+                    .single();
+                if (transaction) {
+                    recipientIds = [transaction.from_id, transaction.to_id];
+                }
+            }
+            
+            // Remove sender
+            recipientIds = recipientIds.filter(id => id !== userId);
+            recipientIds = [...new Set(recipientIds)]; // unique
+
+            if (recipientIds.length > 0) {
+                 const { sendPushNotification } = await import('../utils/push');
+                 await sendPushNotification(env, recipientIds, title, body, url);
+            }
+        } catch (err) {
+            console.error('Failed to trigger notification:', err);
+        }
+     })();
+  }
+
   res.status(201).json(enriched);
 });
 

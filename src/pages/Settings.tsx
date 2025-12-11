@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Moon, Sun, Globe, Info, Pencil, Check, X } from "lucide-react"
+import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2 } from "lucide-react"
 import { useTheme } from "../context/ThemeContext"
 import { useAuth } from "../context/AuthContext"
 import { Button } from "../components/ui/button"
@@ -8,12 +8,30 @@ import { Avatar, AvatarFallback } from "../components/ui/avatar"
 import { Input } from "../components/ui/input"
 import { api } from "../utils/api"
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+const PUBLIC_VAPID_KEY = "BM9l3EBPdQuu4VRU-Tq3jCIpO_grA4OUBlVGzQcOgkcjTzyGrHktPuqQpTby6T3dasXhrPwUYbnDH6qmMOfgVF4";
+
 export function Settings() {
   const { theme, setTheme } = useTheme()
   const { signOut, user } = useAuth()
   const [isEditing, setIsEditing] = useState(false)
   const [newName, setNewName] = useState(user?.user_metadata?.full_name || "")
   const [loading, setLoading] = useState(false)
+  const [notifLoading, setNotifLoading] = useState(false)
 
   const handleLogout = async () => {
     try {
@@ -36,6 +54,31 @@ export function Settings() {
       alert("Failed to update name")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleEnableNotifications = async () => {
+    if (!('serviceWorker' in navigator)) return;
+    setNotifLoading(true);
+    try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
+            });
+
+            await api.post('/notifications/subscribe', { subscription });
+            alert("Notifications enabled!");
+        } else {
+            alert("Permission denied");
+        }
+    } catch (error) {
+        console.error("Failed to enable notifications", error);
+        alert("Failed to enable notifications");
+    } finally {
+        setNotifLoading(false);
     }
   }
 
@@ -86,6 +129,15 @@ export function Settings() {
           Preferences
         </h3>
         <Card className="divide-y">
+          <div className="flex items-center justify-between p-4">
+             <div className="flex items-center gap-3">
+               <Bell className="h-5 w-5 text-muted-foreground" />
+               <span className="font-medium">Notifications</span>
+             </div>
+             <Button variant="outline" size="sm" onClick={handleEnableNotifications} disabled={notifLoading}>
+                {notifLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enable"}
+             </Button>
+          </div>
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-3">
               {theme === "dark" ? (

@@ -67,6 +67,8 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
      })
   }
 
+  const { currentUser } = useData()
+
   if (isLoading) {
       return (
           <div className="flex-1 flex items-center justify-center min-h-[200px] bg-muted/5 rounded-lg">
@@ -74,8 +76,6 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
           </div>
       )
   }
-
-  const { currentUser } = useData()
 
   // ... (useQuery hooks) ...
 

@@ -29,7 +29,10 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
 	"vars": {
-		"SUPABASE_URL": "https://dtbwihnouannkbbfkfhr.supabase.co"
+		"SUPABASE_URL": "https://dtbwihnouannkbbfkfhr.supabase.co",
+		"VAPID_PUBLIC_KEY": "BM9l3EBPdQuu4VRU-Tq3jCIpO_grA4OUBlVGzQcOgkcjTzyGrHktPuqQpTby6T3dasXhrPwUYbnDH6qmMOfgVF4",
+		"VAPID_PRIVATE_KEY": "mYJi9XboxEx-QRemu2LF2FeGzY02H_bvD1YsdxdiMgY",
+		"VAPID_SUBJECT": "mailto:vasu@splitease.app"
 	}
 	/**
 	 * Note: Use secrets to store sensitive data.
