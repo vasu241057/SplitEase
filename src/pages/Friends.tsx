@@ -7,9 +7,13 @@ import { Card } from "../components/ui/card"
 import { cn } from "../utils/cn"
 import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
+import { Skeleton } from "../components/ui/skeleton"
 
 export function Friends() {
-  const { friends } = useData()
+  const { friends, loading } = useData()
+  
+  console.log("DEBUG [Friends Render] Friends List:", friends)
+  friends.forEach(f => console.log(`Friend ${f.name} (${f.id}): Balance=${f.balance} (Type: ${typeof f.balance})`))
 
   const totalOwed = friends
     .filter((f) => f.balance > 0)
@@ -37,10 +41,30 @@ export function Friends() {
 
 
 
-      <TotalBalance amount={netBalance} />
+      {loading ? (
+        <div className="bg-primary text-primary-foreground p-6 rounded-2xl shadow-lg">
+           <Skeleton className="h-4 w-32 bg-primary-foreground/20 mb-2" />
+           <Skeleton className="h-10 w-48 bg-primary-foreground/20" />
+        </div>
+      ) : (
+        <TotalBalance amount={netBalance} />
+      )}
 
       <div className="space-y-3 pb-20">
-        {friends.length === 0 ? (
+        {loading ? (
+           Array.from({ length: 5 }).map((_, i) => (
+             <Card key={i} className="p-4">
+               <div className="flex items-center gap-4">
+                 <Skeleton className="h-10 w-10 rounded-full" />
+                 <div className="flex-1 space-y-2">
+                   <Skeleton className="h-4 w-32" />
+                   <Skeleton className="h-3 w-20" />
+                 </div>
+                 <Skeleton className="h-6 w-16" />
+               </div>
+             </Card>
+           ))
+        ) : friends.length === 0 ? (
           <p className="text-muted-foreground text-center py-8">
             You haven't added any friends yet.
           </p>

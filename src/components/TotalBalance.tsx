@@ -12,9 +12,9 @@ export function TotalBalance({ amount }: TotalBalanceProps) {
   return (
     <Card className={cn(
       "border-none shadow-sm",
-      isPositive ? "bg-green-50 dark:bg-green-950/20" : 
-      isNegative ? "bg-red-50 dark:bg-red-950/20" : 
-      "bg-secondary/50"
+      isPositive ? "bg-green-100 dark:bg-green-950/40" : 
+      isNegative ? "bg-red-100 dark:bg-red-950/40" : 
+      "bg-secondary"
     )}>
       <CardContent className="p-6 text-center">
         <p className={cn(

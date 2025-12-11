@@ -11,6 +11,7 @@ import { AddExpense } from "./pages/AddExpense"
 import { SettleUp } from "./pages/SettleUp"
 import { ExpenseDetail } from "./pages/ExpenseDetail"
 import { CreateGroup } from "./pages/CreateGroup"
+import { TransactionDetail } from "./pages/TransactionDetail"
 import { Login } from "./pages/Login"
 import { Signup } from "./pages/Signup"
 import { InviteFriend } from "./pages/InviteFriend"
@@ -57,6 +58,7 @@ function App() {
             <Route path="/friends" element={<Friends />} />
             <Route path="/friends/:id" element={<FriendDetail />} />
             <Route path="/expenses/:id" element={<ExpenseDetail />} />
+            <Route path="/payments/:id" element={<TransactionDetail />} />
             <Route path="/activity" element={<Activity />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

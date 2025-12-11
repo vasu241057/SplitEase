@@ -20,6 +20,8 @@ const isProfileId = async (supabase: any, id: string) => {
 
 router.get('/', async (req, res) => {
   const userId = (req as any).user.id;
+  console.error(`[DEBUG] Fetching expenses for UserID: ${userId}`);
+  
   const supabase = createSupabaseClient();
   
   // Use RPC to filter expenses relevant to the user
@@ -28,14 +30,20 @@ router.get('/', async (req, res) => {
     .select('*, splits:expense_splits(*)')
     .order('date', { ascending: false });
     
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error(`[DEBUG] Error fetching expenses for UserID ${userId}:`, error.message);
+    return res.status(500).json({ error: error.message });
+  }
+
+  console.error(`[DEBUG] Found ${data?.length || 0} expenses for UserID: ${userId}`);
+  // console.error(`[DEBUG] Raw Data:`, JSON.stringify(data, null, 2)); // Uncomment for verbose logs
   
   const formatted = data.map((e: any) => ({
     ...e,
-    payerId: e.payer_id || 'currentUser',
+    payerId: e.payer_user_id || e.payer_id || userId,
     groupId: e.group_id,
     splits: e.splits.map((s: any) => ({
-      userId: s.friend_id || 'currentUser',
+      userId: s.user_id || s.friend_id || userId,
       amount: s.amount,
       paidAmount: s.paid_amount,
       paid: s.paid
@@ -83,7 +91,7 @@ router.post('/', async (req, res) => {
   try {
     await recalculateBalances(supabase);
   } catch (e: any) {
-    console.error('Error recalculating balances:', e);
+     // console.error('Error recalculating balances:', e); 
   }
 
   const newExpense = {

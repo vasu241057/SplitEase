@@ -1,6 +1,7 @@
+
 import { useState, useMemo, useEffect, useRef } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Receipt, IndianRupee, User as UserIcon, Check, Users, X } from "lucide-react"
+import { ArrowLeft, Receipt, IndianRupee, User as UserIcon, Check, Users, X, Loader2 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -15,7 +16,7 @@ type SplitMode = "you-equal" | "you-full" | "friend-equal" | "friend-full"
 export function AddExpense() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { friends, groups, addExpense, updateExpense, currentUser } = useData()
+  const { friends, groups, addExpense, updateExpense, currentUser, loading } = useData()
   
   const [step, setStep] = useState<Step>(1)
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
@@ -24,6 +25,8 @@ export function AddExpense() {
   const [searchQuery, setSearchQuery] = useState("")
   const [description, setDescription] = useState("")
   const [amount, setAmount] = useState("")
+  
+  const [isSaving, setIsSaving] = useState(false)
   
   const [splitMode] = useState<SplitMode>("you-equal")
   const [groupPayers, setGroupPayers] = useState<string[]>([currentUser.id])
@@ -38,6 +41,7 @@ export function AddExpense() {
 
   // Initialize split members when group/friends selected
   useEffect(() => {
+    if (loading) return
     // Check for Edit Mode
     if (location.state?.editExpense && !initializedRef.current) {
        initializedRef.current = true
@@ -58,7 +62,7 @@ export function AddExpense() {
           .map((s: any) => s.userId)
           .filter((uid: string) => uid !== currentUser.id && !groupMemberIds.includes(uid))
        
-       const friendsToSelect = friends.filter(f => friendIds.includes(f.id))
+       const friendsToSelect = friends.filter(f => friendIds.includes(f.id) || (f.linked_user_id && friendIds.includes(f.linked_user_id)))
        setSelectedFriends(friendsToSelect)
        
        // Set Payers
@@ -107,7 +111,7 @@ export function AddExpense() {
              setGroupPayers([currentUser.id])
         }
     }
-  }, [selectedGroup, selectedFriends, location.state, groups, friends])
+  }, [selectedGroup, selectedFriends, location.state, groups, friends, loading])
 
   const filteredFriends = useMemo(() => {
     return friends.filter(friend => 
@@ -147,244 +151,253 @@ export function AddExpense() {
   }
 
   const handleSave = async () => {
-    if ((!selectedGroup && selectedFriends.length === 0) || !description || !amount) return
-
-    const numAmount = parseFloat(amount)
-    
-    // Complex Logic for Group + Friend Split
-    if (selectedGroup && selectedFriends.length > 0) {
-       // 1. Calculate Shares
-       // Total People = Group Members + Me + Friends
-       // Wait, Group Members includes Me? No, usually 'members' array excludes current user in some implementations, 
-       // but here 'members' are IDs. Let's assume 'members' + 'currentUser'.
-       // And 'selectedFriends' are extra.
-       
-       const groupMemberIds = Array.from(new Set([currentUser.id, ...selectedGroup.members]))
-       const friendIds = selectedFriends.map(f => f.id).filter(id => !groupMemberIds.includes(id))
-       const allParticipants = [...groupMemberIds, ...friendIds]
-       const totalParticipants = allParticipants.length
-       
-       const amountPerPerson = numAmount / totalParticipants
-       
-       const groupAmount = amountPerPerson * groupMemberIds.length
-       const friendAmount = amountPerPerson * friendIds.length // This is total for all friends
-       
-       // 2. Create Group Expense
-       // Payer? If I paid 1000.
-       // Group Portion: 750. I paid 750 for Group.
-       // Friend Portion: 250. I paid 250 for Friend.
-       
-       // We need to split the 'payerAmounts' proportionally if multi-payer?
-       // Or just assume single payer for simplicity in this edge case?
-       // User said: "Paid by option should have all the people of the group plus person for"
-       // So multi-payer is possible.
-       // This is getting very complex. Let's assume proportional distribution of payment.
-       
-       // Simplified approach:
-       // Create ONE expense for the Group, but with the full amount? No, that messes up group stats.
-       // User explicitly asked for TWO expenses.
-       
-       // Expense 1: Group
-       // Amount: groupAmount
-       // Splits: groupMemberIds (equal share)
-       // Payer: We need to determine who paid how much for THIS portion.
-       // If I paid 1000 total. I paid 750 for group, 250 for friend.
-       // So Payer for Group Expense is Me (750).
-       
-       // Expense 2: Friend
-       // Amount: friendAmount (e.g. 250 for 1 friend)
-       // Splits: friendIds + Me?
-       // If I paid 250 for Friend, and Friend owes me 250.
-       // Split: Me (0 share), Friend (250 share).
-       // Payer: Me (250).
-       
-       // What if Alice (Group Member) paid 1000?
-       // Group Expense: Alice paid 750.
-       // Friend Expense: Alice paid 250. Friend owes Alice.
-       
-       // We need to construct the splits carefully.
-       
-       // Helper to distribute payment
-       const getPaymentDistribution = (targetAmount: number, totalAmount: number) => {
-          // Distribute 'targetAmount' among payers proportional to their total payment
-          // This is an approximation but robust.
-          let distributedPayers: Record<string, number> = {}
-          let remaining = targetAmount
-          
-          groupPayers.forEach((pid, index) => {
-             const paid = parseFloat(payerAmounts[pid] || (groupPayers.length === 1 ? amount : "0"))
-             const ratio = paid / totalAmount
-             const portion = targetAmount * ratio
-             
-             // Adjust last one for rounding
-             const finalPortion = index === groupPayers.length - 1 ? remaining : portion
-             distributedPayers[pid] = finalPortion
-             remaining -= finalPortion
-          })
-          return distributedPayers
-       }
-       
-       const groupPayments = getPaymentDistribution(groupAmount, numAmount)
-       const friendPayments = getPaymentDistribution(friendAmount, numAmount) // Total friend amount
-       
-       // Expense 1: Group
-       const groupSplits = groupMemberIds.map(uid => ({
-          userId: uid,
-          amount: amountPerPerson,
-          paidAmount: groupPayments[uid] || 0,
-          paid: (groupPayments[uid] || 0) > 0
-       }))
-       
-       await addExpense({
-          description: `${description} (Group Split)`,
-          amount: groupAmount,
-          payerId: groupPayers[0], // Main payer ID for reference
-          splits: groupSplits,
-          groupId: selectedGroup.id
-       })
-       
-       // Expense 2: Friend(s)
-       // For friend expense, we need to handle each friend separately? 
-       // Or one expense with multiple friends?
-       // "one new expense with him separately" implies one expense per friend?
-       // Or one expense for all friends?
-       // Let's do one expense for ALL friends + Payer(s).
-       // But wait, if I am not in the friend expense (share 0), but I paid.
-       // Split: Me (0 share, paid X), Friend (250 share, paid 0).
-       
-       const friendSplits = [
-          ...friendIds.map(fid => ({
-             userId: fid,
-             amount: amountPerPerson,
-             paidAmount: friendPayments[fid] || 0,
-             paid: (friendPayments[fid] || 0) > 0
-          })),
-          // Add Payers who are NOT friends (e.g. Me or Group Members who paid for friend)
-          ...Object.keys(friendPayments).filter(pid => !friendIds.includes(pid)).map(pid => ({
-             userId: pid,
-             amount: 0, // They don't owe for the friend's share
-             paidAmount: friendPayments[pid],
-             paid: true
-          }))
-       ]
-       
-       await addExpense({
-          description: `${description} (Friend Split)`,
-          amount: friendAmount,
-          payerId: groupPayers[0],
-          splits: friendSplits,
-          groupId: undefined
-       })
-       
-       navigate(-1)
+    if ((!selectedGroup && selectedFriends.length === 0) || !description || !amount) {
        return
     }
 
-    // Standard Logic (Single Group OR Friends)
-    let splits: { userId: string, amount: number, paidAmount: number, paid: boolean }[] = []
-    let payerId = currentUser.id
+    setIsSaving(true)
+    try {
+        const numAmount = parseFloat(amount)
+        
+        // Complex Logic for Group + Friend Split
+        if (selectedGroup && selectedFriends.length > 0) {
+           // 1. Calculate Shares
+           // Total People = Group Members + Me + Friends
+           // Wait, Group Members includes Me? No, usually 'members' array excludes current user in some implementations, 
+           // but here 'members' are IDs. Let's assume 'members' + 'currentUser'.
+           // And 'selectedFriends' are extra.
+           
+           const groupMemberIds = Array.from(new Set([currentUser.id, ...selectedGroup.members]))
+           const friendIds = selectedFriends.map(f => f.id).filter(id => !groupMemberIds.includes(id))
+           const allParticipants = [...groupMemberIds, ...friendIds]
+           const totalParticipants = allParticipants.length
+           
+           const amountPerPerson = numAmount / totalParticipants
+           
+           const groupAmount = amountPerPerson * groupMemberIds.length
+           const friendAmount = amountPerPerson * friendIds.length // This is total for all friends
+           
+           // 2. Create Group Expense
+           // Payer? If I paid 1000.
+           // Group Portion: 750. I paid 750 for Group.
+           // Friend Portion: 250. I paid 250 for Friend.
+           
+           // We need to split the 'payerAmounts' proportionally if multi-payer?
+           // Or just assume single payer for simplicity in this edge case?
+           // User said: "Paid by option should have all the people of the group plus person for"
+           // So multi-payer is possible.
+           // This is getting very complex. Let's assume proportional distribution of payment.
+           
+           // Simplified approach:
+           // Create ONE expense for the Group, but with the full amount? No, that messes up group stats.
+           // User explicitly asked for TWO expenses.
+           
+           // Expense 1: Group
+           // Amount: groupAmount
+           // Splits: groupMemberIds (equal share)
+           // Payer: We need to determine who paid how much for THIS portion.
+           // If I paid 1000 total. I paid 750 for group, 250 for friend.
+           // So Payer for Group Expense is Me (750).
+           
+           // Expense 2: Friend
+           // Amount: friendAmount (e.g. 250 for 1 friend)
+           // Splits: friendIds + Me?
+           // If I paid 250 for Friend, and Friend owes me 250.
+           // Split: Me (0 share), Friend (250 share).
+           // Payer: Me (250).
+           
+           // What if Alice (Group Member) paid 1000?
+           // Group Expense: Alice paid 750.
+           // Friend Expense: Alice paid 250. Friend owes Alice.
+           
+           // We need to construct the splits carefully.
+           
+           // Helper to distribute payment
+           const getPaymentDistribution = (targetAmount: number, totalAmount: number) => {
+              // Distribute 'targetAmount' among payers proportional to their total payment
+              // This is an approximation but robust.
+              let distributedPayers: Record<string, number> = {}
+              let remaining = targetAmount
+              
+              groupPayers.forEach((pid, index) => {
+                 const paid = parseFloat(payerAmounts[pid] || (groupPayers.length === 1 ? amount : "0"))
+                 const ratio = paid / totalAmount
+                 const portion = targetAmount * ratio
+                 
+                 // Adjust last one for rounding
+                 const finalPortion = index === groupPayers.length - 1 ? remaining : portion
+                 distributedPayers[pid] = finalPortion
+                 remaining -= finalPortion
+              })
+              return distributedPayers
+           }
+           
+           const groupPayments = getPaymentDistribution(groupAmount, numAmount)
+           const friendPayments = getPaymentDistribution(friendAmount, numAmount) // Total friend amount
+           
+           // Expense 1: Group
+           const groupSplits = groupMemberIds.map(uid => ({
+              userId: uid,
+              amount: amountPerPerson,
+              paidAmount: groupPayments[uid] || 0,
+              paid: (groupPayments[uid] || 0) > 0
+           }))
+           
+           await addExpense({
+              description: `${description} (Group Split)`,
+              amount: groupAmount,
+              payerId: groupPayers[0], // Main payer ID for reference
+              splits: groupSplits,
+              groupId: selectedGroup.id
+           })
+           
+           // Expense 2: Friend(s)
+           // For friend expense, we need to handle each friend separately? 
+           // Or one expense with multiple friends?
+           // "one new expense with him separately" implies one expense per friend?
+           // Or one expense for all friends?
+           // Let's do one expense for ALL friends + Payer(s).
+           // But wait, if I am not in the friend expense (share 0), but I paid.
+           // Split: Me (0 share, paid X), Friend (250 share, paid 0).
+           
+           const friendSplits = [
+              ...friendIds.map(fid => ({
+                 userId: fid,
+                 amount: amountPerPerson,
+                 paidAmount: friendPayments[fid] || 0,
+                 paid: (friendPayments[fid] || 0) > 0
+              })),
+              // Add Payers who are NOT friends (e.g. Me or Group Members who paid for friend)
+              ...Object.keys(friendPayments).filter(pid => !friendIds.includes(pid)).map(pid => ({
+                 userId: pid,
+                 amount: 0, // They don't owe for the friend's share
+                 paidAmount: friendPayments[pid],
+                 paid: true
+              }))
+           ]
+           
+           await addExpense({
+              description: `${description} (Friend Split)`,
+              amount: friendAmount,
+              payerId: groupPayers[0],
+              splits: friendSplits,
+              groupId: undefined
+           })
+           
+           navigate(-1)
+           return
+        }
 
-    let finalPayerAmounts: Record<string, number> = {}
-    
-    if (groupPayers.length === 1) {
-      finalPayerAmounts[groupPayers[0]] = numAmount
-      payerId = groupPayers[0]
-    } else {
-      groupPayers.forEach(pid => {
-        finalPayerAmounts[pid] = parseFloat(payerAmounts[pid] || "0")
-      })
-      payerId = groupPayers[0]
-    }
+        // Standard Logic (Single Group OR Friends)
+        let splits: { userId: string, amount: number, paidAmount: number, paid: boolean }[] = []
+        let payerId = currentUser.id
 
-    // const owedPerPerson = numAmount / groupSplitMembers.length
-    const allUserIds = Array.from(new Set([...groupPayers, ...groupSplitMembers]))
+        let finalPayerAmounts: Record<string, number> = {}
+        
+        if (groupPayers.length === 1) {
+          finalPayerAmounts[groupPayers[0]] = numAmount
+          payerId = groupPayers[0]
+        } else {
+          groupPayers.forEach(pid => {
+            finalPayerAmounts[pid] = parseFloat(payerAmounts[pid] || "0")
+          })
+          payerId = groupPayers[0]
+        }
 
-    // Rounding Logic
-    const rawSplitAmount = numAmount / groupSplitMembers.length
-    const roundedSplitAmount = Math.round(rawSplitAmount * 100) / 100
-    const totalRounded = roundedSplitAmount * groupSplitMembers.length
-    const remainder = numAmount - totalRounded
+        // const owedPerPerson = numAmount / groupSplitMembers.length
+        const allUserIds = Array.from(new Set([...groupPayers, ...groupSplitMembers]))
 
-    splits = allUserIds.map(userId => {
-      const paidAmt = finalPayerAmounts[userId] || 0
-      const isSplitter = groupSplitMembers.includes(userId)
-      
-      let shareAmt = 0
-      if (isSplitter) {
-         shareAmt = roundedSplitAmount
-         // Add remainder to the first splitter to balance it out
-         if (userId === groupSplitMembers[0]) {
-            shareAmt += remainder
-            // Ensure we keep it to 2 decimals if remainder caused precision issues (though simple addition should be fine for 0.01)
-            shareAmt = Math.round(shareAmt * 100) / 100
-         }
-      }
-      
-      return {
-        userId,
-        amount: shareAmt,
-        paidAmount: paidAmt,
-        paid: paidAmt > 0
-      }
-    })
+        // Rounding Logic
+        const rawSplitAmount = numAmount / groupSplitMembers.length
+        const roundedSplitAmount = Math.round(rawSplitAmount * 100) / 100
+        const totalRounded = roundedSplitAmount * groupSplitMembers.length
+        const remainder = numAmount - totalRounded
 
-    // Map friend IDs to linked_user_id if available
-    splits = splits.map(s => {
-       const friend = friends.find(f => f.id === s.userId)
-       if (friend && friend.linked_user_id) {
-          return { ...s, userId: friend.linked_user_id }
-       }
-       return s
-    })
-
-    if (!selectedGroup && selectedFriends.length === 1) {
-       if (step === 2 && groupPayers.length === 1 && groupPayers[0] === "currentUser" && groupSplitMembers.length === 2) {
-          const friendId = selectedFriends[0].id
-           if (splitMode === "you-equal") {
-             splits = [
-              { userId: currentUser.id, amount: numAmount/2, paidAmount: numAmount, paid: true },
-              { userId: friendId, amount: numAmount/2, paidAmount: 0, paid: false }
-             ]
-          } else if (splitMode === "you-full") {
-             splits = [
-              { userId: currentUser.id, amount: 0, paidAmount: numAmount, paid: true },
-              { userId: friendId, amount: numAmount, paidAmount: 0, paid: false }
-             ]
-          } else if (splitMode === "friend-equal") {
-             splits = [
-              { userId: currentUser.id, amount: numAmount/2, paidAmount: 0, paid: false },
-              { userId: friendId, amount: numAmount/2, paidAmount: numAmount, paid: true }
-             ]
-          } else if (splitMode === "friend-full") {
-             splits = [
-              { userId: currentUser.id, amount: numAmount, paidAmount: 0, paid: false },
-              { userId: friendId, amount: 0, paidAmount: numAmount, paid: true }
-             ]
+        splits = allUserIds.map(userId => {
+          const paidAmt = finalPayerAmounts[userId] || 0
+          const isSplitter = groupSplitMembers.includes(userId)
+          
+          let shareAmt = 0
+          if (isSplitter) {
+             shareAmt = roundedSplitAmount
+             // Add remainder to the first splitter to balance it out
+             if (userId === groupSplitMembers[0]) {
+                shareAmt += remainder
+                // Ensure we keep it to 2 decimals if remainder caused precision issues (though simple addition should be fine for 0.01)
+                shareAmt = Math.round(shareAmt * 100) / 100
+             }
           }
-          payerId = splits.find(s => s.paid)?.userId || currentUser.id
-       }
-    }
+          
+          return {
+            userId,
+            amount: shareAmt,
+            paidAmount: paidAmt,
+            paid: paidAmt > 0
+          }
+        })
 
-    if (location.state?.editExpense) {
-       await updateExpense({
-          ...location.state.editExpense,
-          description,
-          amount: numAmount,
-          payerId,
-          splits,
-          groupId: selectedGroup ? selectedGroup.id : undefined
-       })
-    } else {
-       await addExpense({
-         description,
-         amount: numAmount,
-         payerId,
-         splits,
-         groupId: selectedGroup ? selectedGroup.id : undefined
-       })
-    }
+        // Map friend IDs to linked_user_id if available
+        splits = splits.map(s => {
+           const friend = friends.find(f => f.id === s.userId)
+           if (friend && friend.linked_user_id) {
+              return { ...s, userId: friend.linked_user_id }
+           }
+           return s
+        })
 
-    navigate(-1)
+        if (!selectedGroup && selectedFriends.length === 1) {
+           if (step === 2 && groupPayers.length === 1 && groupPayers[0] === "currentUser" && groupSplitMembers.length === 2) {
+              const friendId = selectedFriends[0].id
+               if (splitMode === "you-equal") {
+                 splits = [
+                  { userId: currentUser.id, amount: numAmount/2, paidAmount: numAmount, paid: true },
+                  { userId: friendId, amount: numAmount/2, paidAmount: 0, paid: false }
+                 ]
+              } else if (splitMode === "you-full") {
+                 splits = [
+                  { userId: currentUser.id, amount: 0, paidAmount: numAmount, paid: true },
+                  { userId: friendId, amount: numAmount, paidAmount: 0, paid: false }
+                 ]
+              } else if (splitMode === "friend-equal") {
+                 splits = [
+                  { userId: currentUser.id, amount: numAmount/2, paidAmount: 0, paid: false },
+                  { userId: friendId, amount: numAmount/2, paidAmount: numAmount, paid: true }
+                 ]
+              } else if (splitMode === "friend-full") {
+                 splits = [
+                  { userId: currentUser.id, amount: numAmount, paidAmount: 0, paid: false },
+                  { userId: friendId, amount: 0, paidAmount: numAmount, paid: true }
+                 ]
+              }
+              payerId = splits.find(s => s.paid)?.userId || currentUser.id
+           }
+        }
+
+        if (location.state?.editExpense) {
+           await updateExpense({
+              ...location.state.editExpense,
+              description,
+              amount: numAmount,
+              payerId,
+              splits,
+              groupId: selectedGroup ? selectedGroup.id : undefined
+           })
+        } else {
+           await addExpense({
+             description,
+             amount: numAmount,
+             payerId,
+             splits,
+             groupId: selectedGroup ? selectedGroup.id : undefined
+           })
+        }
+
+        navigate(-1)
+    } catch (e) {
+        console.error("Error saving expense:", e)
+    } finally {
+        setIsSaving(false)
+    }
   }
 
   const getPaidText = () => {
@@ -601,14 +614,14 @@ export function AddExpense() {
             </motion.div>
           )}
 
-          {step === 2 && (
-        <div className="flex flex-col h-full">
-          {/* Persistent Input Field - Now at the top */}
-          <div className="mb-6">
-             <UnifiedInput isReadOnly={false} autoFocus={false} />
-          </div>
+           {step === 2 && (
+         <div className="flex flex-col flex-1">
+           {/* Persistent Input Field - Now at the top */}
+           <div className="mb-6">
+              <UnifiedInput isReadOnly={false} autoFocus={false} />
+           </div>
 
-          <div className="flex-1 overflow-y-auto pb-20 no-scrollbar flex flex-col justify-center">
+           <div className="flex-1 overflow-y-auto pb-20 no-scrollbar flex flex-col justify-center">
             <motion.div
               key="step2"
               initial={{ opacity: 0, y: 20 }}
@@ -684,9 +697,9 @@ export function AddExpense() {
                   size="lg" 
                   className="w-full" 
                   onClick={handleSave}
-                  disabled={!isDetailsValid}
+                  disabled={!isDetailsValid || isSaving}
                 >
-                  Save Expense
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Expense"}
                 </Button>
               </div>
             </motion.div>

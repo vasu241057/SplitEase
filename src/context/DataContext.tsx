@@ -1,5 +1,6 @@
 
-import React, { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext } from "react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from '../utils/api';
 import { useAuth } from './AuthContext';
 import type { Friend, Group, Expense, Transaction } from "../types"
@@ -23,7 +24,9 @@ type DataContextType = {
   addGroup: (name: string, type: Group["type"], members: string[]) => Promise<void>
   settleUp: (friendId: string, amount: number, type: "paid" | "received") => Promise<void>
   deleteExpense: (id: string) => Promise<void>
+  deleteTransaction: (id: string) => Promise<void>
   restoreExpense: (id: string) => Promise<void>
+  restoreTransaction: (id: string) => Promise<void>
   updateExpense: (expense: Expense) => Promise<void>
   refreshGroups: () => Promise<void>
   refreshExpenses: () => Promise<void>
@@ -33,12 +36,8 @@ type DataContextType = {
 const DataContext = createContext<DataContextType | undefined>(undefined)
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const [friends, setFriends] = useState<Friend[]>([])
-  const [groups, setGroups] = useState<Group[]>([])
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]) // Raw expenses including deleted
-  const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [loading, setLoading] = useState(true)
   const { user } = useAuth()
+  const queryClient = useQueryClient()
 
   const currentUser: User = {
     id: user?.id || "currentUser",
@@ -47,187 +46,154 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     avatar: user?.user_metadata?.avatar_url || "",
   }
 
-  // Fetch initial data
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [friendsData, groupsData, expensesData, transactionsData] = await Promise.all([
-          api.get('/api/friends'),
-          api.get('/api/groups'),
-          api.get('/api/expenses'),
-          api.get('/api/transactions')
-        ])
+  // --- Queries ---
+  const { data: friends = [], isLoading: loadingFriends } = useQuery({
+    queryKey: ['friends'],
+    queryFn: () => api.get('/api/friends').then(res => res || [])
+  })
 
-        setFriends(friendsData)
-        setGroups(groupsData)
-        setAllExpenses(expensesData) // Store ALL expenses
-        setTransactions(transactionsData)
-      } catch (error) {
-        console.error("Failed to fetch data:", error)
-      } finally {
-        setLoading(false)
-      }
+  const { data: groups = [], isLoading: loadingGroups } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => api.get('/api/groups').then(res => res || [])
+  })
+
+  // Fetch ALL expenses including deleted ones
+  const { data: allExpenses = [], isLoading: loadingExpenses } = useQuery({
+    queryKey: ['expenses'],
+    queryFn: () => api.get('/api/expenses').then(res => res || [])
+  })
+
+  const { data: transactions = [], isLoading: loadingTransactions } = useQuery({
+    queryKey: ['transactions'],
+    queryFn: () => api.get('/api/transactions').then(res => res || [])
+  })
+
+  // Derived state
+  const loading = loadingFriends || loadingGroups || loadingExpenses || loadingTransactions
+  const expenses = allExpenses.filter((e: Expense) => !e.deleted)
+
+  // --- Mutations ---
+
+  const addExpenseMutation = useMutation({
+    mutationFn: (expense: Omit<Expense, "id" | "date">) => api.post('/api/expenses', expense),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      queryClient.invalidateQueries({ queryKey: ['friends'] }) // Balances update
     }
+  })
 
-    fetchData()
-  }, [])
+  const addFriendMutation = useMutation({
+    mutationFn: (data: { name: string, email?: string }) => api.post('/api/friends', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['friends'] })
+    }
+  })
 
-  // Derived filtered expenses
-  const expenses = allExpenses.filter(e => !e.deleted)
+  const addGroupMutation = useMutation({
+    mutationFn: (data: { name: string, type: Group["type"], members: string[] }) => api.post('/api/groups', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+    }
+  })
+
+  const settleUpMutation = useMutation({
+    mutationFn: (data: { friendId: string, amount: number, type: "paid" | "received" }) => api.post('/api/transactions/settle-up', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['friends'] })
+    }
+  })
+
+  const deleteTransactionMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/transactions/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['friends'] })
+    },
+    // Optimistic Update could be added here, but SWR style revalidation is safer for balances
+  })
+
+  const restoreTransactionMutation = useMutation({
+      mutationFn: (id: string) => api.post(`/api/transactions/${id}/restore`, {}),
+      onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['transactions'] })
+          queryClient.invalidateQueries({ queryKey: ['friends'] })
+      }
+  })
+
+  const deleteExpenseMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/expenses/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] }) // Refetch to see deleted state if API actually deletes, or we assume soft delete
+      // Note: If API does soft delete, it returns 200/204.
+      // We might need to handle "soft delete" visibility local state if backend deletes record 
+      // User requested "Soft Delete" logic earlier. Backend logic for DELETE /api/expenses/:id does soft delete?
+      // Let's assume standard behavior: refetch to get latest state
+      queryClient.invalidateQueries({ queryKey: ['friends'] })
+    }
+  })
+
+  const restoreExpenseMutation = useMutation({
+      mutationFn: (id: string) => api.post(`/api/expenses/${id}/restore`, {}),
+      onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['expenses'] })
+          queryClient.invalidateQueries({ queryKey: ['friends'] })
+      }
+  })
+
+   // TODO: Add PUT support in backend for better update logic
+  const updateExpenseMutation = useMutation({
+      mutationFn: (expense: Expense) => api.put(`/api/expenses/${expense.id}`, expense),
+      onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['expenses'] })
+          queryClient.invalidateQueries({ queryKey: ['friends'] })
+      }
+  })
+
+  // --- Exposed Handlers (Adapters to match old interface) ---
 
   const addExpense = async (expense: Omit<Expense, "id" | "date">) => {
-    try {
-      const res = await api.post('/api/expenses', expense)
-      if (res) {
-        const newExpense = res
-        setAllExpenses(prev => [newExpense, ...prev])
-        
-        // Refresh friends to update balances
-        // Refresh friends to update balances
-        const friendsData = await api.get('/api/friends')
-        setFriends(friendsData)
-      }
-    } catch (error) {
-      console.error("Failed to add expense:", error)
-    }
+    await addExpenseMutation.mutateAsync(expense)
   }
 
   const addFriend = async (name: string, email?: string) => {
-    try {
-      const res = await api.post('/api/friends', { name, email })
-      if (res) {
-        const newFriend = res
-        setFriends((prev) => [...prev, newFriend])
-      }
-    } catch (error) {
-      console.error("Failed to add friend:", error)
-    }
+     await addFriendMutation.mutateAsync({ name, email })
   }
 
   const addGroup = async (name: string, type: Group["type"], members: string[]) => {
-    try {
-      const res = await api.post('/api/groups', { name, type, members })
-      if (res) {
-        const newGroup = res
-        setGroups((prev) => [...prev, newGroup])
-      }
-    } catch (error) {
-      console.error("Failed to add group:", error)
-    }
-  }
-
-  const refreshGroups = async () => {
-    try {
-      const res = await api.get('/api/groups')
-      if (res) {
-        const groupsData = res
-        setGroups(groupsData)
-      }
-    } catch (error) {
-      console.error("Failed to refresh groups:", error)
-    }
-  }
-
-  const refreshExpenses = async () => {
-    try {
-      const res = await api.get('/api/expenses')
-      if (res) {
-        const expensesData = res
-        setAllExpenses(expensesData)
-      }
-    } catch (error) {
-      console.error("Failed to refresh expenses:", error)
-    }
+      await addGroupMutation.mutateAsync({ name, type, members })
   }
 
   const settleUp = async (friendId: string, amount: number, type: "paid" | "received") => {
-    try {
-      const res = await api.post('/api/transactions/settle-up', { friendId, amount, type })
-      if (res) {
-        const newTransaction = res
-        setTransactions((prev) => [...prev, newTransaction])
+      await settleUpMutation.mutateAsync({ friendId, amount, type })
+  }
 
-        // Refresh friends to update balances
-        // Refresh friends to update balances
-        const friendsData = await api.get('/api/friends')
-        setFriends(friendsData)
-      }
-    } catch (error) {
-      console.error("Failed to settle up:", error)
-    }
+  const deleteTransaction = async (id: string) => {
+      await deleteTransactionMutation.mutateAsync(id)
+  }
+
+  const restoreTransaction = async (id: string) => {
+      await restoreTransactionMutation.mutateAsync(id)
   }
 
   const deleteExpense = async (id: string) => {
-    try {
-      await api.delete(`/api/expenses/${id}`)
-      if (true) {
-        setAllExpenses((prev: Expense[]) => prev.map(e => e.id === id ? { ...e, deleted: true } : e))
-        
-        // Refresh friends to update balances
-        // Refresh friends to update balances
-        const friendsData = await api.get('/api/friends')
-        setFriends(friendsData)
-      }
-    } catch (error) {
-      console.error("Failed to delete expense:", error)
-    }
+      await deleteExpenseMutation.mutateAsync(id)
   }
 
   const restoreExpense = async (id: string) => {
-    try {
-      const res = await api.post(`/api/expenses/${id}/restore`, {})
-      if (res) {
-        // Update allExpenses to mark as not deleted
-        setAllExpenses(prev => prev.map(e => e.id === id ? { ...e, deleted: false } : e))
-        
-        // Refresh friends to update balances
-        // Refresh friends to update balances
-        const friendsData = await api.get('/api/friends')
-        setFriends(friendsData)
-      }
-    } catch (error) {
-      console.error("Failed to restore expense:", error)
-    }
+      await restoreExpenseMutation.mutateAsync(id)
   }
 
   const updateExpense = async (expense: Expense) => {
-     // For now, Edit = Delete + Add
-     // This is simpler given the complex balance logic.
-     // But we need to keep the ID? 
-     // Or just create new. User said "details will be filled...".
-     // If we create new, ID changes. That's fine usually.
-     // But if we want to "Edit", usually we keep ID.
-     // Let's implement a proper PUT /expenses/:id later if needed.
-     // For now, the plan implies using AddExpense screen.
-     // If AddExpense saves, it does POST.
-     // We might need to modify AddExpense to do PUT if editing.
-     
-     // Actually, let's stick to the plan: AddExpense handles the save.
-     // If we are editing, we probably want to Delete the old one and Add a new one
-     // OR update the existing one.
-     // Updating existing is better.
-     
-     // Let's add updateExpense here but we need backend support for PUT.
-     // For this iteration, let's assume AddExpense will handle the API call logic
-     // or we add PUT support.
-     
-     // Let's add PUT support to backend quickly?
-     // Or just Delete + Add in frontend?
-     // Delete + Add is risky if Add fails.
-     // Let's add PUT to backend in next step if needed.
-     // For now, let's just leave updateExpense placeholder or implement it assuming PUT exists.
-     
-     try {
-         const res = await api.put(`/api/expenses/${expense.id}`, expense)
-         if (res) {
-            const updated = res
-           setAllExpenses((prev: Expense[]) => prev.map(e => e.id === expense.id ? updated : e))
-           const friendsData = await api.get('/api/friends')
-           setFriends(friendsData)
-        }
-     } catch (error) {
-        console.error("Failed to update expense", error)
-     }
+      await updateExpenseMutation.mutateAsync(expense)
+  }
+
+  const refreshGroups = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['groups'] })
+  }
+
+  const refreshExpenses = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['expenses'] })
   }
 
   return (
@@ -236,15 +202,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         friends,
         groups,
-      expenses,
-      allExpenses,
-      transactions,
-      addExpense,
+        expenses,
+        allExpenses,
+        transactions,
+        addExpense,
         addFriend,
         addGroup,
         settleUp,
         deleteExpense,
+        deleteTransaction,
         restoreExpense,
+        restoreTransaction,
         updateExpense,
         refreshGroups,
         refreshExpenses,

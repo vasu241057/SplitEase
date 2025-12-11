@@ -1,10 +1,11 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Pencil, Trash2, Calendar, Receipt } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, Calendar, Receipt, Loader2 } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
+import { Skeleton } from "../components/ui/skeleton"
 
 import { useToast } from "../context/ToastContext"
 
@@ -12,13 +13,48 @@ export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { allExpenses, friends, deleteExpense, restoreExpense, currentUser, loading } = useData()
+  const { showToast } = useToast()
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isRestoring, setIsRestoring] = useState(false)
   
   const expense = allExpenses.find(e => e.id === id)
 
   if (loading) {
      return (
-        <div className="flex items-center justify-center min-h-[50vh]">
-           <p className="text-muted-foreground">Loading expense details...</p>
+        <div className="space-y-6 container mx-auto px-4 py-4">
+           {/* Header Skeleton */}
+           <div className="flex justify-between items-center">
+             <Skeleton className="h-10 w-10 rounded-full" />
+             <div className="flex gap-2">
+               <Skeleton className="h-10 w-10 rounded-full" />
+               <Skeleton className="h-10 w-10 rounded-full" />
+             </div>
+           </div>
+           
+           {/* Main Content Skeleton */}
+           <div className="flex items-center gap-4">
+             <Skeleton className="h-16 w-16 rounded-full" />
+             <div className="space-y-2">
+               <Skeleton className="h-6 w-48" />
+               <Skeleton className="h-8 w-32" />
+             </div>
+           </div>
+           
+           <Skeleton className="h-4 w-32" />
+           
+           <Card className="p-4 space-y-4">
+             <Skeleton className="h-6 w-full mb-4" />
+             {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-8 w-8 rounded-full" />
+                    <Skeleton className="h-4 w-24" />
+                  </div>
+                  <Skeleton className="h-4 w-16" />
+                </div>
+             ))}
+           </Card>
         </div>
      )
   }
@@ -34,25 +70,34 @@ export function ExpenseDetail() {
     )
   }
 
-  const { showToast } = useToast()
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-
   const handleDelete = async () => {
-    await deleteExpense(expense.id)
-    showToast("Expense deleted", "info", {
-      label: "Undo",
-      onClick: async () => {
-        await restoreExpense(expense.id)
-        showToast("Expense restored", "success")
-      }
-    })
-    navigate(-1)
+    try {
+      setIsDeleting(true)
+      await deleteExpense(expense.id)
+      showToast("Expense deleted", "info", {
+        label: "Undo",
+        onClick: async () => {
+          await restoreExpense(expense.id)
+          showToast("Expense restored", "success")
+        }
+      })
+      navigate(-1)
+    } catch (error) {
+       setIsDeleting(false)
+       showToast("Failed to delete expense", "error")
+    }
   }
 
   const handleRestore = async () => {
-    await restoreExpense(expense.id)
-    showToast("Expense restored", "success")
-    navigate(-1) // Or stay on page? Navigate back seems safer as it might disappear from some lists
+    try {
+      setIsRestoring(true)
+      await restoreExpense(expense.id)
+      showToast("Expense restored", "success")
+      navigate(-1)
+    } catch (error) {
+       setIsRestoring(false)
+       showToast("Failed to restore expense", "error")
+    }
   }
 
   const handleEdit = () => {
@@ -75,13 +120,15 @@ export function ExpenseDetail() {
 
   // Determine who paid
   // Note: split.paidAmount might be undefined if not set, default to 0
-  const splits = (expense.splits || []).filter(s => s && s.userId)
-  console.log('ExpenseDetail render:', { expense, splits, friends })
+  const splits = useMemo(() => (expense.splits || []).filter(s => s && s.userId), [expense.splits])
   
-  const payers = splits.filter(s => (s.paidAmount || 0) > 0)
-  const paidText = payers.length === 1 && payers[0]
+  const payers = useMemo(() => splits.filter(s => (s.paidAmount || 0) > 0), [splits])
+  
+  const paidText = useMemo(() => {
+    return payers.length === 1 && payers[0]
     ? `${getMemberName(payers[0].userId)} paid ₹${expense.amount}`
     : `${payers.length} people paid ₹${expense.amount}`
+  }, [payers, expense.amount])
 
   return (
     <div className="space-y-6 container mx-auto px-4 py-4">
@@ -93,7 +140,10 @@ export function ExpenseDetail() {
         {expense.deleted ? (
            <div className="flex items-center gap-2">
              <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-sm font-bold">Deleted</span>
-             <Button size="sm" variant="outline" onClick={handleRestore}>Restore</Button>
+             <Button size="sm" variant="outline" onClick={handleRestore} disabled={isRestoring}>
+                {isRestoring ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Restore
+              </Button>
            </div>
         ) : (
           <div className="flex gap-2">
@@ -189,7 +239,9 @@ export function ExpenseDetail() {
                 variant="destructive"
                 className="flex-1"
                 onClick={handleDelete}
+                disabled={isDeleting}
               >
+                {isDeleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 Delete
               </Button>
             </div>

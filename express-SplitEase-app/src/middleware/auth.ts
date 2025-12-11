@@ -9,7 +9,7 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
-  console.error('DEBUG: Received Token:', token.substring(0, 20) + '...');
+
   
   if (!token) {
     console.error('DEBUG: Token is empty');
@@ -17,14 +17,6 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
   }
 
   const supabase = createSupabaseClient();
-  
-  // DEBUG: Verify Admin Access
-  const { data: adminData, error: adminError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1 });
-  if (adminError) {
-    console.error('DEBUG: Admin Access Failed! Service Role Key is likely invalid.', adminError);
-  } else {
-    console.error('DEBUG: Admin Access Successful. Backend is configured correctly.');
-  }
 
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
