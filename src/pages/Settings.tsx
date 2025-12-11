@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2 } from "lucide-react"
+import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2, QrCode } from "lucide-react"
 import { useTheme } from "../context/ThemeContext"
 import { useAuth } from "../context/AuthContext"
 import { Button } from "../components/ui/button"
@@ -7,6 +7,7 @@ import { Card } from "../components/ui/card"
 import { Avatar, AvatarFallback } from "../components/ui/avatar"
 import { Input } from "../components/ui/input"
 import { api } from "../utils/api"
+import { QRScanner } from "../components/QRScanner"
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -32,6 +33,7 @@ export function Settings() {
   const [newName, setNewName] = useState(user?.user_metadata?.full_name || "")
   const [loading, setLoading] = useState(false)
   const [notifLoading, setNotifLoading] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
 
   const handleLogout = async () => {
     try {
@@ -70,28 +72,19 @@ export function Settings() {
         console.log("Permission status:", permission);
 
         if (permission === 'granted') {
-            console.log("Waiting for Service Worker ready...");
             const registration = await navigator.serviceWorker.ready;
-            console.log("Service Worker registration:", registration);
 
-            // Check if pushManager exists
             if (!registration.pushManager) {
                 throw new Error("Push Manager not available in this browser/context");
             }
 
-            console.log("Subscribing to Push Manager with key:", PUBLIC_VAPID_KEY);
             const convertedKey = urlBase64ToUint8Array(PUBLIC_VAPID_KEY);
-            console.log("Converted Key length:", convertedKey.length);
-
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: convertedKey
             });
-            console.log("Subscription successful:", subscription);
 
-            console.log("Sending subscription to backend...");
             await api.post('/api/notifications/subscribe', { subscription });
-            console.log("Backend registration successful");
             
             alert("Notifications enabled successfully!");
         } else {
@@ -104,6 +97,26 @@ export function Settings() {
     } finally {
         setNotifLoading(false);
     }
+  }
+
+  const handleScanSuccess = async (decodedText: string) => {
+      setShowScanner(false);
+      try {
+          // Extract Invite Code from URL or Raw Text
+          let inviteCode = decodedText;
+          if (decodedText.includes('/invite/')) {
+              const parts = decodedText.split('/invite/');
+              if (parts.length > 1) inviteCode = parts[1];
+          }
+          
+          const res = await api.post('/api/friends/accept-invite', { inviteCode });
+          if (res) {
+              alert(`Successfully added friend: ${res.friend.name || 'Unknown'}`);
+          }
+      } catch (error: any) {
+          console.error("Failed to accept invite", error);
+          alert("Failed to accept invite: " + (error.response?.data?.error || error.message));
+      }
   }
 
   return (
@@ -153,6 +166,14 @@ export function Settings() {
           Preferences
         </h3>
         <Card className="divide-y">
+           <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => setShowScanner(true)}>
+             <div className="flex items-center gap-3">
+               <QrCode className="h-5 w-5 text-muted-foreground" />
+               <span className="font-medium">Scan Invite Code</span>
+             </div>
+             <Button variant="ghost" size="sm">Scan</Button>
+           </div>
+
           <div className="flex items-center justify-between p-4">
              <div className="flex items-center gap-3">
                <Bell className="h-5 w-5 text-muted-foreground" />
@@ -218,6 +239,13 @@ export function Settings() {
           </Button>
         </div>
       </div>
+
+      {showScanner && (
+        <QRScanner 
+           onScanSuccess={handleScanSuccess} 
+           onClose={() => setShowScanner(false)} 
+        />
+      )}
     </div>
   )
 }
