@@ -144,7 +144,7 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
                    placeholder="Type a message..." 
                    value={content}
                    onChange={(e) => setContent(e.target.value)}
-                   className="flex-1 border-none shadow-none bg-transparent focus-visible:ring-0 h-10 px-4"
+                   className="flex-1 border-none shadow-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 h-10 px-4 placeholder:text-muted-foreground/50"
                 />
                 <Button 
                     type="button" 
