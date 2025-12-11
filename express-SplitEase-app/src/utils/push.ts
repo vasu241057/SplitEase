@@ -25,16 +25,24 @@ export async function sendPushNotification(
 
     const supabase = createSupabaseClient();
 
+    console.error('[PUSH LOG] Fetching subscriptions for users:', userIds);
     // Get subscriptions for users
     const { data: subscriptions, error } = await supabase
       .from('push_subscriptions')
       .select('*')
       .in('user_id', userIds);
 
-    if (error || !subscriptions || subscriptions.length === 0) {
-      console.log('No subscriptions found for users:', userIds);
+    if (error) {
+        console.error('[PUSH LOG] Database error fetching subscriptions:', error);
+        return;
+    }
+
+    if (!subscriptions || subscriptions.length === 0) {
+      console.error('[PUSH LOG] No subscriptions found in DB for these users.');
       return;
     }
+
+    console.error(`[PUSH LOG] Found ${subscriptions.length} subscriptions. Preparing to send...`);
 
     const payload = JSON.stringify({
       title,
@@ -54,21 +62,23 @@ export async function sendPushNotification(
       };
 
       try {
-        await webpush.sendNotification(pushSubscription, payload);
+        console.error(`[PUSH LOG] Sending to endpoint: ${sub.endpoint.slice(0, 30)}...`);
+        const result = await webpush.sendNotification(pushSubscription, payload);
+        console.error('[PUSH LOG] Send result status:', result.statusCode);
       } catch (err: any) {
+        console.error('[PUSH LOG] Error sending individual push:', err.statusCode, err.message);
         if (err.statusCode === 410 || err.statusCode === 404) {
           // Subscription expired or invalid, delete it
+          console.error('[PUSH LOG] Deleting expired subscription:', sub.id);
           await supabase.from('push_subscriptions').delete().eq('id', sub.id);
-        } else {
-            console.error('Error sending push notification:', err);
         }
       }
     });
 
     await Promise.all(promises);
-    console.log(`Sent notifications to ${subscriptions.length} devices.`);
+    console.error('[PUSH LOG] Finished processing all notifications.');
 
   } catch (error) {
-    console.error('Failed to send push notifications:', error);
+    console.error('[PUSH LOG] Critical failure in sendPushNotification:', error);
   }
 }

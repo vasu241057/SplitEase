@@ -30,8 +30,8 @@
 	 */
 	"vars": {
 		"SUPABASE_URL": "https://dtbwihnouannkbbfkfhr.supabase.co",
-		"VAPID_PUBLIC_KEY": "BM9l3EBPdQuu4VRU-Tq3jCIpO_grA4OUBlVGzQcOgkcjTzyGrHktPuqQpTby6T3dasXhrPwUYbnDH6qmMOfgVF4",
-		"VAPID_PRIVATE_KEY": "mYJi9XboxEx-QRemu2LF2FeGzY02H_bvD1YsdxdiMgY",
+		"VAPID_PUBLIC_KEY": "BOgFWXxAEi9KkhmM7hbNqUByhTZ9vKtXoIxjtsk9q73rg5rnYKpsQLP-ULNhWos7gCAgGue76roRD6khIkMzY1g",
+		"VAPID_PRIVATE_KEY": "n6KRBgnqbeC0RWStMzXdmktndDU5oN-CsUMuofB5E6k",
 		"VAPID_SUBJECT": "mailto:vasu@splitease.app"
 	}
 	/**

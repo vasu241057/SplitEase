@@ -23,7 +23,7 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-const PUBLIC_VAPID_KEY = "BM9l3EBPdQuu4VRU-Tq3jCIpO_grA4OUBlVGzQcOgkcjTzyGrHktPuqQpTby6T3dasXhrPwUYbnDH6qmMOfgVF4";
+const PUBLIC_VAPID_KEY = "BOgFWXxAEi9KkhmM7hbNqUByhTZ9vKtXoIxjtsk9q73rg5rnYKpsQLP-ULNhWos7gCAgGue76roRD6khIkMzY1g";
 
 export function Settings() {
   const { theme, setTheme } = useTheme()
@@ -58,25 +58,49 @@ export function Settings() {
   }
 
   const handleEnableNotifications = async () => {
-    if (!('serviceWorker' in navigator)) return;
+    if (!('serviceWorker' in navigator)) {
+        console.error("Service Worker not supported");
+        alert("Service Worker not supported in this browser");
+        return;
+    }
     setNotifLoading(true);
     try {
+        console.log("Requesting notification permission...");
         const permission = await Notification.requestPermission();
+        console.log("Permission status:", permission);
+
         if (permission === 'granted') {
+            console.log("Waiting for Service Worker ready...");
             const registration = await navigator.serviceWorker.ready;
+            console.log("Service Worker registration:", registration);
+
+            // Check if pushManager exists
+            if (!registration.pushManager) {
+                throw new Error("Push Manager not available in this browser/context");
+            }
+
+            console.log("Subscribing to Push Manager with key:", PUBLIC_VAPID_KEY);
+            const convertedKey = urlBase64ToUint8Array(PUBLIC_VAPID_KEY);
+            console.log("Converted Key length:", convertedKey.length);
+
             const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY)
+                applicationServerKey: convertedKey
             });
+            console.log("Subscription successful:", subscription);
 
-            await api.post('/notifications/subscribe', { subscription });
-            alert("Notifications enabled!");
+            console.log("Sending subscription to backend...");
+            await api.post('/api/notifications/subscribe', { subscription });
+            console.log("Backend registration successful");
+            
+            alert("Notifications enabled successfully!");
         } else {
-            alert("Permission denied");
+            console.warn("Permission denied by user");
+            alert("Permission denied. Please enable notifications in your browser settings.");
         }
-    } catch (error) {
-        console.error("Failed to enable notifications", error);
-        alert("Failed to enable notifications");
+    } catch (error: any) {
+        console.error("Failed to enable notifications full error:", error);
+        alert(`Failed to enable notifications: ${error.name} - ${error.message}`);
     } finally {
         setNotifLoading(false);
     }

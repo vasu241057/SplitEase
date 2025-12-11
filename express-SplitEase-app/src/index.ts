@@ -26,7 +26,7 @@ app.use('/api/groups', groupsRoutes);
 app.use('/api/expenses', expensesRoutes);
 app.use('/api/transactions', transactionsRoutes);
 app.use('/api/comments', commentsRoutes);
-app.use('/api/notifications', notificationsRoutes);
+app.use('/api/notifications', authMiddleware, notificationsRoutes);
 
 app.get('/', (req, res) => {
   res.send('SplitEase Worker API (Express) is running!');
