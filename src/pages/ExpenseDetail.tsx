@@ -199,13 +199,18 @@ export function ExpenseDetail() {
                    }
 
                    return (
-                      <div key={split.userId} className="flex items-center justify-between">
+                      <div key={split.userId} className="flex items-center justify-between py-2">
                          <div className="flex items-center gap-3">
-                            <Avatar className="h-8 w-8">
+                            <Avatar className="h-9 w-9">
                                <AvatarImage src={avatar} />
                                <AvatarFallback>{name[0]}</AvatarFallback>
                             </Avatar>
-                            <span className="font-medium">{name}</span>
+                            <div className="flex flex-col">
+                               <span className="font-medium text-sm">{name}</span>
+                               <span className="text-xs text-muted-foreground">
+                                  Paid ₹{split.paidAmount || 0} • Share ₹{split.amount}
+                               </span>
+                            </div>
                          </div>
                          <span className={`text-sm font-bold ${statusColor}`}>{statusText}</span>
                       </div>

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, Loader2 } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
@@ -17,18 +17,25 @@ export function SettleUp() {
   const [direction, setDirection] = useState<"paying" | "receiving">(
     (location.state?.defaultDirection as "paying" | "receiving") || "paying"
   )
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!friendId || !amount) return
 
-    settleUp(
-      friendId,
-      parseFloat(amount),
-      direction === "paying" ? "paid" : "received"
-    )
-
-    navigate("/")
+    setLoading(true)
+    try {
+        await settleUp(
+          friendId,
+          parseFloat(amount),
+          direction === "paying" ? "paid" : "received"
+        )
+        navigate("/")
+    } catch (error) {
+        console.error("Error settling up:", error)
+    } finally {
+        setLoading(false)
+    }
   }
 
   return (
@@ -48,6 +55,7 @@ export function SettleUp() {
             value={friendId}
             onChange={(e) => setFriendId(e.target.value)}
             required
+            disabled={loading}
           >
             <option value="">Select a friend</option>
             {friends.map(friend => (
@@ -64,6 +72,7 @@ export function SettleUp() {
               direction === "paying" ? "bg-background shadow" : "text-muted-foreground"
             )}
             onClick={() => setDirection("paying")}
+            disabled={loading}
           >
             I paid
           </button>
@@ -74,6 +83,7 @@ export function SettleUp() {
               direction === "receiving" ? "bg-background shadow" : "text-muted-foreground"
             )}
             onClick={() => setDirection("receiving")}
+            disabled={loading}
           >
             I received
           </button>
@@ -93,12 +103,20 @@ export function SettleUp() {
               required
               min="0"
               step="0.01"
+              disabled={loading}
             />
           </div>
         </div>
 
-        <Button type="submit" className="w-full" size="lg">
-          Record Payment
+        <Button type="submit" className="w-full" size="lg" disabled={loading}>
+          {loading ? (
+             <>
+               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+               Recording...
+             </>
+          ) : (
+             "Record Payment"
+          )}
         </Button>
       </form>
     </div>

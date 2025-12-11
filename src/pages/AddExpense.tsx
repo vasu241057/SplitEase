@@ -10,8 +10,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { cn } from "../utils/cn"
 import type { Friend, Group } from "../types"
 
-type Step = 1 | 2 | 3 | 4 | 5 // 3: Payer Select (Group), 4: Split Select (Group), 5: Multi-Payer Amount Input
-type SplitMode = "you-equal" | "you-full" | "friend-equal" | "friend-full"
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 // 3: Payer Select, 4: Split Method, 5: Multi-Payer, 6: Uneven Split, 7: Percentage Split
+type SplitMode = "equally" | "unequally" | "percentage"
 
 export function AddExpense() {
   const navigate = useNavigate()
@@ -28,10 +28,16 @@ export function AddExpense() {
   
   const [isSaving, setIsSaving] = useState(false)
   
-  const [splitMode] = useState<SplitMode>("you-equal")
+  const [splitMode, setSplitMode] = useState<SplitMode>("equally")
   const [groupPayers, setGroupPayers] = useState<string[]>([currentUser.id])
   const [groupSplitMembers, setGroupSplitMembers] = useState<string[]>([])
+  
+  // Track amounts for payers (UserId -> Amount)
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({})
+  // Track amounts for splitters (UserId -> Amount) - used for "unequally"
+  const [splitAmounts, setSplitAmounts] = useState<Record<string, string>>({})
+  // Track percentages for splitters (UserId -> Percentage) - used for "percentage"
+  const [splitPercentages, setSplitPercentages] = useState<Record<string, string>>({})
 
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -98,6 +104,25 @@ export function AddExpense() {
        // Set Split Members
        const splitters = editExp.splits.filter((s: any) => s.amount > 0).map((s: any) => s.userId)
        setGroupSplitMembers(splitters)
+
+       // Determine Split Mode and Pre-fill amounts
+       // Check if split is roughly equal
+       const totalAmount = parseFloat(editExp.amount.toString())
+       const equalShare = totalAmount / splitters.length
+       // Allow small float diff (0.01)
+       const isRoughlyEqual = editExp.splits.filter((s: any) => s.amount > 0).every((s: any) => Math.abs(s.amount - equalShare) < 0.1)
+
+       if (isRoughlyEqual) {
+           setSplitMode('equally')
+       } else {
+           // Default to uneven for now if not equal
+           setSplitMode('unequally')
+           const sAmts: Record<string, string> = {}
+           editExp.splits.forEach((s: any) => {
+               if (s.amount > 0) sAmts[s.userId] = s.amount.toString()
+           })
+           setSplitAmounts(sAmts)
+       }
        
        setStep(2)
        setStep(2)
@@ -315,54 +340,67 @@ export function AddExpense() {
            return
         }
 
-        // Standard Logic (Single Group OR Friends)
+
+        // Determine Payer Distribution
         let splits: { userId: string, amount: number, paidAmount: number, paid: boolean }[] = []
-        let payerId = currentUser.id
-
         let finalPayerAmounts: Record<string, number> = {}
-        
-        if (groupPayers.length === 1) {
-          finalPayerAmounts[groupPayers[0]] = numAmount
-          payerId = groupPayers[0]
-        } else {
-          groupPayers.forEach(pid => {
-            finalPayerAmounts[pid] = parseFloat(payerAmounts[pid] || "0")
-          })
-          payerId = groupPayers[0]
-        }
 
-        // const owedPerPerson = numAmount / groupSplitMembers.length
+        // Calculate Paid Amounts
+        if (groupPayers.length === 1) {
+             finalPayerAmounts[groupPayers[0]] = numAmount
+        } else {
+             // Multi-payer
+             groupPayers.forEach(pid => {
+                finalPayerAmounts[pid] = parseFloat(payerAmounts[pid] || "0")
+             })
+        }
+        
+        let finalSplitAmounts: Record<string, number> = {}
         const allUserIds = Array.from(new Set([...groupPayers, ...groupSplitMembers]))
 
-        // Rounding Logic
-        const rawSplitAmount = numAmount / groupSplitMembers.length
-        const roundedSplitAmount = Math.round(rawSplitAmount * 100) / 100
-        const totalRounded = roundedSplitAmount * groupSplitMembers.length
-        const remainder = numAmount - totalRounded
+        // Calculate Split Amounts based on Mode
+        if (splitMode === 'equally') {
+            const rawSplitAmount = numAmount / groupSplitMembers.length
+            const roundedSplitAmount = Math.round(rawSplitAmount * 100) / 100
+            const totalRounded = roundedSplitAmount * groupSplitMembers.length
+            const remainder = numAmount - totalRounded
 
-        splits = allUserIds.map(userId => {
-          const paidAmt = finalPayerAmounts[userId] || 0
-          const isSplitter = groupSplitMembers.includes(userId)
-          
-          let shareAmt = 0
-          if (isSplitter) {
-             shareAmt = roundedSplitAmount
-             // Add remainder to the first splitter to balance it out
-             if (userId === groupSplitMembers[0]) {
-                shareAmt += remainder
-                // Ensure we keep it to 2 decimals if remainder caused precision issues (though simple addition should be fine for 0.01)
-                shareAmt = Math.round(shareAmt * 100) / 100
+            groupSplitMembers.forEach((uid, index) => {
+                let share = roundedSplitAmount
+                 if (index === 0) share += remainder // Give dust to first person
+                 finalSplitAmounts[uid] = Math.round(share * 100) / 100
+            })
+        } else if (splitMode === 'unequally') {
+             groupSplitMembers.forEach(uid => {
+                 finalSplitAmounts[uid] = parseFloat(splitAmounts[uid] || "0")
+             })
+        } else if (splitMode === 'percentage') {
+             groupSplitMembers.forEach(uid => {
+                 const pct = parseFloat(splitPercentages[uid] || "0")
+                 const share = (numAmount * pct) / 100
+                 finalSplitAmounts[uid] = Math.round(share * 100) / 100
+             })
+             // Adjust rounding error for percentage
+             const currentTotal = Object.values(finalSplitAmounts).reduce((a, b) => a + b, 0)
+             const diff = numAmount - currentTotal
+             if (Math.abs(diff) > 0.001 && groupSplitMembers.length > 0) {
+                 finalSplitAmounts[groupSplitMembers[0]] += diff
+                 finalSplitAmounts[groupSplitMembers[0]] = Math.round(finalSplitAmounts[groupSplitMembers[0]] * 100) / 100
              }
-          }
-          
-          return {
-            userId,
-            amount: shareAmt,
-            paidAmount: paidAmt,
-            paid: paidAmt > 0
-          }
-        })
+        }
 
+        // Construct Splits Array
+        splits = allUserIds.map(userId => {
+             const paid = finalPayerAmounts[userId] || 0
+             const owed = finalSplitAmounts[userId] || 0
+             return {
+                 userId,
+                 amount: owed,
+                 paidAmount: paid,
+                 paid: paid > 0
+             }
+        })
+        
         // Map friend IDs to linked_user_id if available
         splits = splits.map(s => {
            const friend = friends.find(f => f.id === s.userId)
@@ -372,32 +410,12 @@ export function AddExpense() {
            return s
         })
 
-        if (!selectedGroup && selectedFriends.length === 1) {
-           if (step === 2 && groupPayers.length === 1 && groupPayers[0] === "currentUser" && groupSplitMembers.length === 2) {
-              const friendId = selectedFriends[0].id
-               if (splitMode === "you-equal") {
-                 splits = [
-                  { userId: currentUser.id, amount: numAmount/2, paidAmount: numAmount, paid: true },
-                  { userId: friendId, amount: numAmount/2, paidAmount: 0, paid: false }
-                 ]
-              } else if (splitMode === "you-full") {
-                 splits = [
-                  { userId: currentUser.id, amount: 0, paidAmount: numAmount, paid: true },
-                  { userId: friendId, amount: numAmount, paidAmount: 0, paid: false }
-                 ]
-              } else if (splitMode === "friend-equal") {
-                 splits = [
-                  { userId: currentUser.id, amount: numAmount/2, paidAmount: 0, paid: false },
-                  { userId: friendId, amount: numAmount/2, paidAmount: numAmount, paid: true }
-                 ]
-              } else if (splitMode === "friend-full") {
-                 splits = [
-                  { userId: currentUser.id, amount: numAmount, paidAmount: 0, paid: false },
-                  { userId: friendId, amount: 0, paidAmount: numAmount, paid: true }
-                 ]
-              }
-              payerId = splits.find(s => s.paid)?.userId || currentUser.id
-           }
+        // Determine main payer (for display mostly)
+        // If single payer, easy. If multi, pick the one who paid most? or just first.
+        let payerId = groupPayers[0]
+        if (groupPayers.length > 1) {
+             const maxPayer = Object.entries(finalPayerAmounts).sort((a, b) => b[1] - a[1])[0]
+             payerId = maxPayer ? maxPayer[0] : groupPayers[0]
         }
 
         if (location.state?.editExpense) {
@@ -420,6 +438,7 @@ export function AddExpense() {
         }
 
         navigate(-1)
+
     } catch (e) {
         console.error("Error saving expense:", e)
     } finally {
@@ -781,6 +800,12 @@ export function AddExpense() {
           )}
 
           {/* Step 4: Split Select */}
+          {/* Consolidated Split Step: Step 4 */}
+          {/** 
+             * We are merging Step 4 (Selection), Step 6 (Numbers), Step 7 (Percentage) into one.
+             * This step is now just "Step 4" logically, but we can keep the ID as 4.
+             * Steps 6 and 7 are removed/unreachable effectively.
+           **/}
           {step === 4 && (
             <motion.div 
               key="step4"
@@ -789,32 +814,205 @@ export function AddExpense() {
               exit={{ opacity: 0, x: -20 }}
               className="flex-1 flex flex-col space-y-4"
             >
-              <h2 className="text-lg font-semibold mb-4">For whom?</h2>
-              <div className="space-y-2">
-                {activeMembers.map(memberId => {
-                  const member = getMemberDetails(memberId)
-                  return (
-                    <div 
-                      key={memberId}
-                      className={cn(
-                        "flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors",
-                        groupSplitMembers.includes(memberId) ? "border-primary bg-primary/5" : "hover:bg-muted/50"
-                      )}
-                      onClick={() => toggleSplitMember(memberId)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <Avatar>
-                          <AvatarImage src={member.avatar} />
-                          <AvatarFallback>{member.name[0]}</AvatarFallback>
-                        </Avatar>
-                        <span className="font-medium">{member.name}</span>
-                      </div>
-                      {groupSplitMembers.includes(memberId) && <Check className="h-5 w-5 text-primary" />}
-                    </div>
-                  )
-                })}
+              <h2 className="text-lg font-semibold mb-2">How to split?</h2>
+              
+              {/* Tab Buttons */}
+              <div className="flex gap-2 mb-4">
+                  <Button 
+                    variant={splitMode === 'equally' ? "default" : "outline"} 
+                    className="flex-1 font-bold text-lg"
+                    onClick={() => setSplitMode('equally')}
+                  >
+                    =
+                  </Button>
+                  <Button 
+                    variant={splitMode === 'unequally' ? "default" : "outline"} 
+                    className="flex-1 font-bold text-lg"
+                    onClick={() => {
+                        setSplitMode('unequally')
+                        // Ensure all active members are treated as potential splitters in this mode initially?
+                        // Actually, if we switch to manual, we typically want to see everyone to assign values?
+                        // But let's keep the existing selection if possible, or reset.
+                        // Standard behavior: show everyone.
+                        // We also need to initialize splitAmounts if empty? 
+                        // Let's rely on user input.
+                    }}
+                  >
+                    1.23
+                  </Button>
+                  <Button 
+                    variant={splitMode === 'percentage' ? "default" : "outline"} 
+                    className="flex-1 font-bold text-lg"
+                    onClick={() => setSplitMode('percentage')}
+                  >
+                    %
+                  </Button>
               </div>
-              <Button className="w-full mt-6" onClick={() => setStep(2)}>Done</Button>
+              
+              <div className="space-y-4 flex-1 overflow-y-auto pb-20">
+                 {splitMode === 'equally' && (
+                     <>
+                        <div className="bg-primary/5 p-4 rounded-lg mb-2 text-center">
+                            <h3 className="font-medium text-primary">Split equally</h3>
+                            <p className="text-sm text-muted-foreground">Select which people share the expense.</p>
+                        </div>
+                        <div className="space-y-2">
+                            {activeMembers.map(memberId => {
+                            const member = getMemberDetails(memberId)
+                            const isIncluded = groupSplitMembers.includes(memberId)
+                            return (
+                                <div 
+                                key={memberId}
+                                className={cn(
+                                    "flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors",
+                                    isIncluded ? "border-primary bg-primary/5" : "hover:bg-muted/50"
+                                )}
+                                onClick={() => toggleSplitMember(memberId)}
+                                >
+                                <div className="flex items-center gap-3">
+                                    <Avatar>
+                                    <AvatarImage src={member.avatar} />
+                                    <AvatarFallback>{member.name[0]}</AvatarFallback>
+                                    </Avatar>
+                                    <span className="font-medium">{member.name}</span>
+                                </div>
+                                {isIncluded ? <Check className="h-5 w-5 text-primary" /> : <div className="h-5 w-5 border rounded-full" />}
+                                </div>
+                            )
+                            })}
+                        </div>
+                     </>
+                 )}
+
+                 {splitMode === 'unequally' && (
+                     <>
+                        <div className="bg-primary/5 p-4 rounded-lg mb-2 text-center">
+                            <h3 className="font-medium text-primary">Split by exact amounts</h3>
+                            <p className="text-sm text-muted-foreground">Enter the amount each person owes.</p>
+                        </div>
+                        <div className="space-y-4">
+                            {activeMembers.map(memberId => {
+                                const member = getMemberDetails(memberId)
+                                return (
+                                    <div key={memberId} className="flex items-center gap-3">
+                                        <Avatar>
+                                            <AvatarImage src={member.avatar} />
+                                            <AvatarFallback>{member.name[0]}</AvatarFallback>
+                                        </Avatar>
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium">{member.name}</p>
+                                        </div>
+                                        <div className="relative w-32">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">₹</span>
+                                            <Input 
+                                                type="number" 
+                                                className="pl-7" 
+                                                placeholder="0"
+                                                value={splitAmounts[memberId] || ""}
+                                                onChange={(e) => {
+                                                    setSplitAmounts(prev => ({...prev, [memberId]: e.target.value}))
+                                                    // Also implicitly add to split members if value > 0?
+                                                    // Yes, crucial for logic later.
+                                                    if (parseFloat(e.target.value) > 0) {
+                                                         if (!groupSplitMembers.includes(memberId)) setGroupSplitMembers(p => [...p, memberId])
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                     </>
+                 )}
+
+                 {splitMode === 'percentage' && (
+                     <>
+                        <div className="bg-primary/5 p-4 rounded-lg mb-2 text-center">
+                             <h3 className="font-medium text-primary">Split by percentages</h3>
+                             <p className="text-sm text-muted-foreground">Enter the percentage share for each person.</p>
+                        </div>
+                        <div className="space-y-4">
+                            {activeMembers.map(memberId => {
+                                const member = getMemberDetails(memberId)
+                                return (
+                                    <div key={memberId} className="flex items-center gap-3">
+                                        <Avatar>
+                                            <AvatarImage src={member.avatar} />
+                                            <AvatarFallback>{member.name[0]}</AvatarFallback>
+                                        </Avatar>
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium">{member.name}</p>
+                                        </div>
+                                        <div className="relative w-32">
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">%</span>
+                                            <Input 
+                                                type="number" 
+                                                className="pr-8" 
+                                                placeholder="0"
+                                                value={splitPercentages[memberId] || ""}
+                                                onChange={(e) => {
+                                                    setSplitPercentages(prev => ({...prev, [memberId]: e.target.value}))
+                                                    if (parseFloat(e.target.value) > 0) {
+                                                         if (!groupSplitMembers.includes(memberId)) setGroupSplitMembers(p => [...p, memberId])
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                     </>
+                 )}
+              </div>
+
+              {/* Shared Footer for Step 4 */}
+              <div className="mt-auto pt-4 sticky bottom-0 bg-background pb-4 border-t">
+                  {splitMode === 'equally' && (
+                       <Button className="w-full" onClick={() => setStep(2)} disabled={groupSplitMembers.length === 0}>
+                           Done
+                       </Button>
+                  )}
+                  {splitMode === 'unequally' && (
+                       <>
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-sm font-medium">Total: ₹{amount}</span>
+                            {(() => {
+                                const currentSum = Object.values(splitAmounts).reduce((a, b) => a + (parseFloat(b) || 0), 0)
+                                const left = (parseFloat(amount) || 0) - currentSum
+                                return (
+                                    <span className={cn("text-sm font-bold", Math.abs(left) < 0.01 ? "text-green-600" : "text-red-600")}>
+                                        {Math.abs(left) < 0.01 ? "Perfect!" : `₹${left.toFixed(2)} left`}
+                                    </span>
+                                )
+                            })()}
+                        </div>
+                        <Button className="w-full" onClick={() => setStep(2)} disabled={Math.abs((parseFloat(amount) || 0) - Object.values(splitAmounts).reduce((a, b) => a + (parseFloat(b) || 0), 0)) > 0.1}>
+                            Done
+                        </Button>
+                       </>
+                  )}
+                  {splitMode === 'percentage' && (
+                       <>
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-sm font-medium">Total: 100%</span>
+                            {(() => {
+                                const currentSum = Object.values(splitPercentages).reduce((a, b) => a + (parseFloat(b) || 0), 0)
+                                const left = 100 - currentSum
+                                return (
+                                    <span className={cn("text-sm font-bold", Math.abs(left) < 0.1 ? "text-green-600" : "text-red-600")}>
+                                        {Math.abs(left) < 0.1 ? "Perfect!" : `${left.toFixed(1)}% left`}
+                                    </span>
+                                )
+                            })()}
+                        </div>
+                        <Button className="w-full" onClick={() => setStep(2)} disabled={Math.abs(100 - Object.values(splitPercentages).reduce((a, b) => a + (parseFloat(b) || 0), 0)) > 0.1}>
+                            Done
+                        </Button>
+                       </>
+                  )}
+              </div>
             </motion.div>
           )}
 
@@ -829,11 +1027,6 @@ export function AddExpense() {
             >
               <h2 className="text-lg font-semibold mb-4">Enter paid amounts</h2>
               <div className="space-y-4">
-                {/* We need to allow selecting payers here too if they weren't selected before? 
-                    User said: "if I click on multiple people, then the field that this person paid, this person paid should appear."
-                    So we should list ALL active members and allow entering amounts.
-                    If amount > 0, they are a payer.
-                */}
                 {activeMembers.map(memberId => {
                   const member = getMemberDetails(memberId)
                   return (
@@ -877,7 +1070,6 @@ export function AddExpense() {
                     </span>
                  </div>
                  <Button className="w-full" onClick={() => {
-                    // Update groupPayers to only those with > 0 amount
                     const activePayers = Object.keys(payerAmounts).filter(pid => parseFloat(payerAmounts[pid]) > 0)
                     setGroupPayers(activePayers.length > 0 ? activePayers : ["currentUser"])
                     setStep(2)
@@ -892,3 +1084,4 @@ export function AddExpense() {
     </motion.div>
   )
 }
+

@@ -141,27 +141,47 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     throw txError;
   }
   
+  // Create quick lookup for Friend Details to find linked_user_id
+  const friendMap = new Map<string, { owner_id: string, linked_user_id: string | null, name: string }>();
+  friendsData.forEach((f: any) => friendMap.set(f.id, f));
+
   transactionsData.forEach((tx: any) => {
-    // tx.friend_id is a specific row in `friends`.
-    // "Paid" aka "Settled":
-    // If I paid Friend X (I owed X), X's balance (positive "owes you"?) NO.
-    // Let's re-verify the "Balance Meanings".
-    // Friend.balance > 0 : "Friend owes Me".
-    // Friend.balance < 0 : "I owe Friend".
-    
-    // If tx.type == 'paid': "I paid Friend".
-    // Means I owed Friend (Neg Balance). I paid. Balance should increase (closer to 0 or positive).
-    // Friend Record Balance += Amount.
-    
-    // If tx.type == 'received': "Friend paid Me".
-    // Means Friend owed Me (Pos Balance). They paid. Balance should decrease.
-    // Friend Record Balance -= Amount.
-    
+    // 1. Update Current Friend Record
     const current = friendBalances.get(tx.friend_id) || 0;
+    
+    // Log transaction processing
+    console.log(`[DEBUG] Processing TX ${tx.id} Type: ${tx.type} Amount: ${tx.amount} FriendID: ${tx.friend_id}`);
+
     if (tx.type === 'paid') {
       friendBalances.set(tx.friend_id, current + tx.amount);
     } else {
       friendBalances.set(tx.friend_id, current - tx.amount);
+    }
+
+    // 2. Update Inverse Friend Record (if Global User)
+    const friendInfo = friendMap.get(tx.friend_id);
+    if (friendInfo && friendInfo.owner_id && friendInfo.linked_user_id) {
+       // Find the Inverse Record: where Owner is the Linked User, and Linked User is the Owner
+       const inverseKey = `${friendInfo.linked_user_id}:${friendInfo.owner_id}`;
+       const inverseFriendId = globalFriendLookup.get(inverseKey);
+       
+       if (inverseFriendId) {
+          const inverseCurrent = friendBalances.get(inverseFriendId) || 0;
+          
+          console.log(`[DEBUG] Found Inverse Friend Record! ID: ${inverseFriendId} (Key: ${inverseKey})`);
+
+          // Apply OPPOSITE effect
+          // If A paid B (A->B +Amount), then B received from A (B->A -Amount)
+          if (tx.type === 'paid') {
+             friendBalances.set(inverseFriendId, inverseCurrent - tx.amount);
+             console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent - tx.amount}`);
+          } else {
+             friendBalances.set(inverseFriendId, inverseCurrent + tx.amount);
+             console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent + tx.amount}`);
+          }
+       } else {
+          console.warn(`[DEBUG] Inverse Friend Record NOT FOUND for Key: ${inverseKey}`);
+       }
     }
   });
 
@@ -170,6 +190,9 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
   const validUpdates = Array.from(friendBalances.entries()).map(async ([id, balance]) => {
      // Optional: Round to 2 decimals
      const finalBalance = Math.round(balance * 100) / 100;
+     // Optimization: Only update if changed? 
+     // For now, update all to be safe.
+     // console.log(`[DEBUG] Setting Balance for Friend ${id} -> ${finalBalance}`);
      await supabase.from('friends').update({ balance: finalBalance }).eq('id', id);
   });
   
