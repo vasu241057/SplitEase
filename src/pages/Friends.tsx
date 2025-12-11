@@ -67,7 +67,7 @@ export function Friends() {
           </p>
         ) : (
           friends.map((friend) => (
-            <Link key={friend.id} to={`/friends/${friend.id}`}>
+            <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
                 <div className="flex items-center gap-4">
                   <Avatar>

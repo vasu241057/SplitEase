@@ -6,6 +6,7 @@ import friendsRoutes from './routes/friends';
 import groupsRoutes from './routes/groups';
 import expensesRoutes from './routes/expenses';
 import transactionsRoutes from './routes/transactions';
+import commentsRoutes from './routes/comments';
 import { authMiddleware } from './middleware/auth';
 
 const app = express();
@@ -23,6 +24,7 @@ app.use('/api/friends', friendsRoutes);
 app.use('/api/groups', groupsRoutes);
 app.use('/api/expenses', expensesRoutes);
 app.use('/api/transactions', transactionsRoutes);
+app.use('/api/comments', commentsRoutes);
 
 app.get('/', (req, res) => {
   res.send('SplitEase Worker API (Express) is running!');

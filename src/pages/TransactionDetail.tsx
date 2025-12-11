@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button"
 import { useState } from "react"
 import { cn } from "../utils/cn"
 import { Skeleton } from "../components/ui/skeleton"
+import { CommentSection } from "../components/CommentSection"
 
 export function TransactionDetail() {
   const { id } = useParams<{ id: string }>()
@@ -100,7 +101,7 @@ export function TransactionDetail() {
                 <Button 
                     variant="outline" 
                     size="sm" 
-                    className="text-green-600 border-green-200 hover:bg-green-50"
+                    className="text-green-600 border-green-200 hover:bg-green-50 disabled:bg-background disabled:text-green-600 disabled:border-green-200 disabled:opacity-100"
                     onClick={handleRestore}
                     disabled={isRestoring}
                 >
@@ -171,6 +172,8 @@ export function TransactionDetail() {
                     This payment was deleted. Restore it to affect balances again.
                 </div>
             )}
+
+            <CommentSection entityType="payment" entityId={transaction.id} />
         </div>
       </div>
 

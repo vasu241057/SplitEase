@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Skeleton } from "../components/ui/skeleton"
+import { CommentSection } from "../components/CommentSection"
 
 
 
@@ -133,7 +134,7 @@ export function ExpenseDetail() {
         {expense.deleted ? (
            <div className="flex items-center gap-2">
              <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-sm font-bold">Deleted</span>
-             <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50" onClick={handleRestore} disabled={isRestoring}>
+             <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50 disabled:bg-background disabled:text-green-600 disabled:border-green-200 disabled:opacity-100" onClick={handleRestore} disabled={isRestoring}>
                 {isRestoring ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 ) : (
@@ -215,6 +216,8 @@ export function ExpenseDetail() {
               })}
            </div>
         </Card>
+
+        <CommentSection entityType="expense" entityId={expense.id} />
       </div>
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

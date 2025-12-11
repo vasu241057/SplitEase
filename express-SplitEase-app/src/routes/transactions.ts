@@ -95,6 +95,15 @@ router.post('/settle-up', async (req, res) => {
     deleted: false
   };
 
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'payment',
+    entity_id: data.id,
+    user_id: (req as any).user.id,
+    content: 'settled up',
+    is_system: true
+  });
+
   res.status(201).json(formatted);
 });
 
@@ -110,6 +119,15 @@ router.delete('/:id', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   await recalculateBalances(supabase);
+
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'payment',
+    entity_id: id,
+    user_id: (req as any).user.id,
+    content: 'deleted this payment',
+    is_system: true
+  });
 
   res.json({ message: "Transaction deleted successfully" });
 });
@@ -150,6 +168,15 @@ router.post('/:id/restore', async (req, res) => {
     toId,
     description: "Settle Up"
   };
+
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'payment',
+    entity_id: id,
+    user_id: (req as any).user.id,
+    content: 'restored this payment',
+    is_system: true
+  });
 
   res.json(formatted);
 });

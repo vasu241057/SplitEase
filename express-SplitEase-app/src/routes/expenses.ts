@@ -99,6 +99,15 @@ router.post('/', async (req, res) => {
     splits
   };
 
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'expense',
+    entity_id: expense.id,
+    user_id: (req as any).user.id,
+    content: 'created this expense',
+    is_system: true
+  });
+
   res.status(201).json(newExpense);
 });
 
@@ -165,6 +174,15 @@ router.delete('/:id', async (req, res) => {
 
   await recalculateBalances(supabase);
 
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'expense',
+    entity_id: id,
+    user_id: (req as any).user.id,
+    content: 'deleted this expense',
+    is_system: true
+  });
+
   res.json({ message: "Expense deleted successfully" });
 });
 
@@ -182,6 +200,15 @@ router.post('/:id/restore', async (req, res) => {
   await recalculateBalances(supabase);
 
   const { data } = await supabase.from('expenses').select('*').eq('id', id).single();
+  // System Comment
+  await supabase.from('comments').insert({
+    entity_type: 'expense',
+    entity_id: id,
+    user_id: (req as any).user.id,
+    content: 'restored this expense',
+    is_system: true
+  });
+
   res.json(data);
 });
 
