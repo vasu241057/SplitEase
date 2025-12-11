@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom"
 import { ArrowLeft, Trash2, RotateCcw, ArrowRightLeft, Calendar, User, Loader2 } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
-import { useToast } from "../context/ToastContext"
+
 import { useState } from "react"
 import { cn } from "../utils/cn"
 import { Skeleton } from "../components/ui/skeleton"
@@ -12,7 +12,6 @@ export function TransactionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { transactions, currentUser, deleteTransaction, restoreTransaction, friends, loading } = useData()
-  const { showToast } = useToast()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
@@ -61,10 +60,8 @@ export function TransactionDetail() {
     try {
       setIsDeleting(true)
       await deleteTransaction(transaction.id)
-      showToast("Payment deleted", "info")
       navigate(-1)
     } catch (error) {
-      showToast("Failed to delete payment", "error")
       setIsDeleting(false)
     }
   }
@@ -73,11 +70,9 @@ export function TransactionDetail() {
     try {
       setIsRestoring(true)
       await restoreTransaction(transaction.id)
-      showToast("Payment restored", "success")
       navigate(-1)
     } catch (error) {
-      showToast("Failed to restore payment", "error")
-      setIsRestoring(false)
+       setIsRestoring(false)
     }
   }
 
@@ -109,7 +104,11 @@ export function TransactionDetail() {
                     onClick={handleRestore}
                     disabled={isRestoring}
                 >
-                    {isRestoring ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
+                    {isRestoring ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                    )}
                     Restore
                 </Button>
             ) : (

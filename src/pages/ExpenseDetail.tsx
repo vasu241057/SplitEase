@@ -1,24 +1,53 @@
 import { useState, useMemo } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, Pencil, Trash2, Calendar, Receipt, Loader2 } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, Calendar, Receipt, Loader2, RotateCcw } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Skeleton } from "../components/ui/skeleton"
 
-import { useToast } from "../context/ToastContext"
+
 
 export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { allExpenses, friends, deleteExpense, restoreExpense, currentUser, loading } = useData()
-  const { showToast } = useToast()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
   
   const expense = allExpenses.find(e => e.id === id)
+
+  // Helper functions must be defined before use if used in useMemo or other hooks
+  const getMemberName = (id: string) => {
+    if (id === "currentUser" || id === currentUser.id) return "You"
+    if (!friends) return "Unknown"
+    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
+    return friend ? friend.name : "Unknown"
+  }
+  
+  const getMemberAvatar = (id: string) => {
+     if (id === "currentUser" || id === currentUser.id) return currentUser.avatar
+     if (!friends) return undefined
+     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
+     return friend?.avatar
+  }
+
+  // Determine who paid
+  // Safe access to expense.splits with optional chaining
+  const splits = useMemo(() => (expense?.splits || []).filter(s => s && s.userId), [expense?.splits])
+  
+  const payers = useMemo(() => splits.filter(s => (s.paidAmount || 0) > 0), [splits])
+  
+  const paidText = useMemo(() => {
+    if (!expense) return ""
+    return payers.length === 1 && payers[0]
+    ? `${getMemberName(payers[0].userId)} paid ₹${expense.amount}`
+    : `${payers.length} people paid ₹${expense.amount}`
+  }, [payers, expense?.amount]) 
+
+  // --- Conditional Returns AFTER all hooks ---
 
   if (loading) {
      return (
@@ -74,17 +103,9 @@ export function ExpenseDetail() {
     try {
       setIsDeleting(true)
       await deleteExpense(expense.id)
-      showToast("Expense deleted", "info", {
-        label: "Undo",
-        onClick: async () => {
-          await restoreExpense(expense.id)
-          showToast("Expense restored", "success")
-        }
-      })
       navigate(-1)
     } catch (error) {
        setIsDeleting(false)
-       showToast("Failed to delete expense", "error")
     }
   }
 
@@ -92,43 +113,15 @@ export function ExpenseDetail() {
     try {
       setIsRestoring(true)
       await restoreExpense(expense.id)
-      showToast("Expense restored", "success")
       navigate(-1)
     } catch (error) {
        setIsRestoring(false)
-       showToast("Failed to restore expense", "error")
     }
   }
 
   const handleEdit = () => {
     navigate("/add-expense", { state: { editExpense: expense } })
   }
-
-  const getMemberName = (id: string) => {
-    if (id === "currentUser" || id === currentUser.id) return "You"
-    if (!friends) return "Unknown"
-    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-    return friend ? friend.name : "Unknown"
-  }
-  
-  const getMemberAvatar = (id: string) => {
-     if (id === "currentUser" || id === currentUser.id) return currentUser.avatar
-     if (!friends) return undefined
-     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-     return friend?.avatar
-  }
-
-  // Determine who paid
-  // Note: split.paidAmount might be undefined if not set, default to 0
-  const splits = useMemo(() => (expense.splits || []).filter(s => s && s.userId), [expense.splits])
-  
-  const payers = useMemo(() => splits.filter(s => (s.paidAmount || 0) > 0), [splits])
-  
-  const paidText = useMemo(() => {
-    return payers.length === 1 && payers[0]
-    ? `${getMemberName(payers[0].userId)} paid ₹${expense.amount}`
-    : `${payers.length} people paid ₹${expense.amount}`
-  }, [payers, expense.amount])
 
   return (
     <div className="space-y-6 container mx-auto px-4 py-4">
@@ -141,7 +134,11 @@ export function ExpenseDetail() {
            <div className="flex items-center gap-2">
              <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-sm font-bold">Deleted</span>
              <Button size="sm" variant="outline" onClick={handleRestore} disabled={isRestoring}>
-                {isRestoring ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                {isRestoring ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                )}
                 Restore
               </Button>
            </div>

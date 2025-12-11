@@ -134,7 +134,8 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
   const { data: transactionsData, error: txError } = await supabase
     .from('transactions')
     .select('*')
-    .in('type', ['paid', 'received']);
+    .in('type', ['paid', 'received'])
+    .eq('deleted', false);
   if (txError) {
     console.error('[DEBUG] Error fetching transactions:', txError);
     throw txError;

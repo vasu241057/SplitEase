@@ -60,7 +60,27 @@ export function AddExpense() {
        const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members || []) : []
        const friendIds = editExp.splits
           .map((s: any) => s.userId)
-          .filter((uid: string) => uid !== currentUser.id && !groupMemberIds.includes(uid))
+          .filter((uid: string) => {
+              if (uid === currentUser.id) return false
+              if (groupMemberIds.includes(uid)) return false
+              
+              // Check if this UID maps to a friend (by ID or Linked User ID)
+              const friend = friends.find(f => f.id === uid || f.linked_user_id === uid)
+              
+              if (friend) {
+                  const linkedId = friend.linked_user_id
+                  // Check if EITHER the Friend ID or the Linked User ID is in the group members list
+                  const isMember = (linkedId && groupMemberIds.includes(linkedId)) || groupMemberIds.includes(friend.id)
+                  
+                  if (isMember) {
+                      return false // Is actually a member
+                  }
+                  
+                  return true // Treat as Friend
+              } 
+              
+              return false
+          })
        
        const friendsToSelect = friends.filter(f => friendIds.includes(f.id) || (f.linked_user_id && friendIds.includes(f.linked_user_id)))
        setSelectedFriends(friendsToSelect)

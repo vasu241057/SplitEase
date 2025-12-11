@@ -12,9 +12,6 @@ import { Skeleton } from "../components/ui/skeleton"
 export function Friends() {
   const { friends, loading } = useData()
   
-  console.log("DEBUG [Friends Render] Friends List:", friends)
-  friends.forEach(f => console.log(`Friend ${f.name} (${f.id}): Balance=${f.balance} (Type: ${typeof f.balance})`))
-
   const totalOwed = friends
     .filter((f) => f.balance > 0)
     .reduce((acc, curr) => acc + curr.balance, 0)

@@ -20,7 +20,6 @@ const isProfileId = async (supabase: any, id: string) => {
 
 router.get('/', async (req, res) => {
   const userId = (req as any).user.id;
-  console.error(`[DEBUG] Fetching expenses for UserID: ${userId}`);
   
   const supabase = createSupabaseClient();
   
@@ -31,11 +30,10 @@ router.get('/', async (req, res) => {
     .order('date', { ascending: false });
     
   if (error) {
-    console.error(`[DEBUG] Error fetching expenses for UserID ${userId}:`, error.message);
     return res.status(500).json({ error: error.message });
   }
 
-  console.error(`[DEBUG] Found ${data?.length || 0} expenses for UserID: ${userId}`);
+  // console.error(`[DEBUG] Found ${data?.length || 0} expenses for UserID: ${userId}`);
   // console.error(`[DEBUG] Raw Data:`, JSON.stringify(data, null, 2)); // Uncomment for verbose logs
   
   const formatted = data.map((e: any) => ({
@@ -109,6 +107,8 @@ router.put('/:id', async (req, res) => {
   const { description, amount, date, payerId, splits, groupId } = req.body;
   const supabase = createSupabaseClient();
 
+  // ... (rest of logic)
+
   const { error: expenseError } = await supabase
     .from('expenses')
     .update({
@@ -123,6 +123,8 @@ router.put('/:id', async (req, res) => {
 
   if (expenseError) return res.status(500).json({ error: expenseError.message });
 
+  // ...
+  
   const { error: deleteError } = await supabase
     .from('expense_splits')
     .delete()
@@ -138,11 +140,11 @@ router.put('/:id', async (req, res) => {
     paid_amount: s.paidAmount || 0,
     paid: s.paid || false
   })));
-
+  
   const { error: splitError } = await supabase
     .from('expense_splits')
     .insert(splitInserts);
-
+    
   if (splitError) return res.status(500).json({ error: splitError.message });
 
   await recalculateBalances(supabase);

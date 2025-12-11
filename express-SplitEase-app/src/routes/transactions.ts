@@ -14,9 +14,6 @@ router.get('/', async (req, res) => {
     .from('transactions')
     .select('*, friend:friends(owner_id, linked_user_id)');
   
-  if (data && data.length > 0) {
-     console.log("DEBUG [API] Raw Transaction 0:", data[0]);
-  }
   
   if (error) return res.status(500).json({ error: error.message });
   
