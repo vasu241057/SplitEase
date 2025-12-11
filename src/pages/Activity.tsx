@@ -1,4 +1,4 @@
-import { Banknote, ArrowRightLeft, Loader2 } from "lucide-react"
+import { Banknote, ArrowRightLeft } from "lucide-react"
 import { cn } from "../utils/cn"
 import { useData } from "../context/DataContext"
 import { Card } from "../components/ui/card"
