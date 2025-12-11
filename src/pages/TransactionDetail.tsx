@@ -86,8 +86,8 @@ export function TransactionDetail() {
   const isPayerMe = transaction.fromId === currentUser.id
 
   return (
-    <div className="fixed inset-0 z-50 bg-background overflow-y-auto">
-      <div className="container mx-auto px-4 py-4 min-h-screen flex flex-col">
+    <div className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 z-40 bg-background flex flex-col">
+      <div className="flex-none container mx-auto px-4 pt-4 pb-3 space-y-6 max-h-[60vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
@@ -172,14 +172,14 @@ export function TransactionDetail() {
                     This payment was deleted. Restore it to affect balances again.
                 </div>
             )}
-
-            <CommentSection entityType="payment" entityId={transaction.id} />
         </div>
       </div>
 
+       <CommentSection entityType="payment" entityId={transaction.id} className="border-t flex-1" />
+
        {/* Delete Confirmation Modal */}
        {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
           <div className="bg-background rounded-lg max-w-sm w-full p-6 space-y-4">
             <h2 className="text-xl font-bold">Delete Payment?</h2>
             <p className="text-muted-foreground">

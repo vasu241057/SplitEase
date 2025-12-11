@@ -125,103 +125,102 @@ export function ExpenseDetail() {
   }
 
   return (
-    <div className="space-y-6 container mx-auto px-4 py-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-6 w-6" />
-        </Button>
-        {expense.deleted ? (
-           <div className="flex items-center gap-2">
-             <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-sm font-bold">Deleted</span>
-             <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50 disabled:bg-background disabled:text-green-600 disabled:border-green-200 disabled:opacity-100" onClick={handleRestore} disabled={isRestoring}>
-                {isRestoring ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <RotateCcw className="h-4 w-4 mr-2" />
-                )}
-                Restore
+    <div className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 z-40 bg-background flex flex-col">
+      <div className="flex-none container mx-auto px-4 pt-4 pb-3 space-y-6 max-h-[60vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-6 w-6" />
+          </Button>
+          {expense.deleted ? (
+             <div className="flex items-center gap-2">
+               <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-sm font-bold">Deleted</span>
+               <Button size="sm" variant="outline" className="text-green-600 border-green-200 hover:bg-green-50 disabled:bg-background disabled:text-green-600 disabled:border-green-200 disabled:opacity-100" onClick={handleRestore} disabled={isRestoring}>
+                  {isRestoring ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                  )}
+                  Restore
+                </Button>
+             </div>
+          ) : (
+            <div className="flex gap-2">
+              <Button variant="ghost" size="icon" onClick={handleEdit}>
+                <Pencil className="h-5 w-5" />
               </Button>
-           </div>
-        ) : (
-          <div className="flex gap-2">
-            <Button variant="ghost" size="icon" onClick={handleEdit}>
-              <Pencil className="h-5 w-5" />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => setShowDeleteConfirm(true)} className="text-red-500 hover:text-red-600 hover:bg-red-50">
-              <Trash2 className="h-5 w-5" />
-            </Button>
+              <Button variant="ghost" size="icon" onClick={() => setShowDeleteConfirm(true)} className="text-red-500 hover:text-red-600 hover:bg-red-50">
+                <Trash2 className="h-5 w-5" />
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Main Content Info */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+             <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center">
+                <Receipt className="h-8 w-8 text-primary" />
+             </div>
+             <div>
+                <h1 className="text-2xl font-bold">{expense.description}</h1>
+                <p className="text-3xl font-bold mt-1">₹{expense.amount}</p>
+             </div>
           </div>
-        )}
+          
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+             <Calendar className="h-4 w-4" />
+             Added on {new Date(expense.date).toLocaleDateString()}
+          </div>
+
+          <Card className="p-4 space-y-4">
+             <div className="flex items-center justify-between pb-4 border-b">
+                <span className="font-medium text-muted-foreground">{paidText}</span>
+             </div>
+             
+             <div className="space-y-4">
+                {splits.map(split => {
+                   const name = getMemberName(split.userId)
+                   const avatar = getMemberAvatar(split.userId)
+                   
+                   const net = (split.paidAmount || 0) - split.amount
+                   let statusText = ""
+                   let statusColor = ""
+                   
+                   if (Math.abs(net) < 0.01) {
+                      statusText = "settled"
+                      statusColor = "text-muted-foreground"
+                   } else if (net > 0) {
+                      statusText = `gets back ₹${net.toFixed(2)}`
+                      statusColor = "text-green-600"
+                   } else {
+                      statusText = `owes ₹${Math.abs(net).toFixed(2)}`
+                      statusColor = "text-red-600"
+                   }
+
+                   return (
+                      <div key={split.userId} className="flex items-center justify-between">
+                         <div className="flex items-center gap-3">
+                            <Avatar className="h-8 w-8">
+                               <AvatarImage src={avatar} />
+                               <AvatarFallback>{name[0]}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">{name}</span>
+                         </div>
+                         <span className={`text-sm font-bold ${statusColor}`}>{statusText}</span>
+                      </div>
+                   )
+                })}
+             </div>
+          </Card>
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-           <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center">
-              <Receipt className="h-8 w-8 text-primary" />
-           </div>
-           <div>
-              <h1 className="text-2xl font-bold">{expense.description}</h1>
-              <p className="text-3xl font-bold mt-1">₹{expense.amount}</p>
-           </div>
-        </div>
-        
-        <div className="text-sm text-muted-foreground flex items-center gap-2">
-           <Calendar className="h-4 w-4" />
-           Added on {new Date(expense.date).toLocaleDateString()}
-        </div>
+      <CommentSection entityType="expense" entityId={expense.id} className="border-t" />
 
-        <Card className="p-4 space-y-4">
-           <div className="flex items-center justify-between pb-4 border-b">
-              <span className="font-medium text-muted-foreground">{paidText}</span>
-           </div>
-           
-           <div className="space-y-4">
-              {splits.map(split => {
-                 const name = getMemberName(split.userId)
-                 const avatar = getMemberAvatar(split.userId)
-                 
-                 // Logic to show "owed" or "lent"
-                 // If paidAmount > amount (share), they lent (are owed)
-                 // If paidAmount < amount, they owe
-                 
-                 const net = (split.paidAmount || 0) - split.amount
-                 let statusText = ""
-                 let statusColor = ""
-                 
-                 if (Math.abs(net) < 0.01) {
-                    statusText = "settled"
-                    statusColor = "text-muted-foreground"
-                 } else if (net > 0) {
-                    statusText = `gets back ₹${net.toFixed(2)}`
-                    statusColor = "text-green-600"
-                 } else {
-                    statusText = `owes ₹${Math.abs(net).toFixed(2)}`
-                    statusColor = "text-red-600"
-                 }
-
-                 return (
-                    <div key={split.userId} className="flex items-center justify-between">
-                       <div className="flex items-center gap-3">
-                          <Avatar className="h-8 w-8">
-                             <AvatarImage src={avatar} />
-                             <AvatarFallback>{name[0]}</AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{name}</span>
-                       </div>
-                       <span className={`text-sm font-bold ${statusColor}`}>{statusText}</span>
-                    </div>
-                 )
-              })}
-           </div>
-        </Card>
-
-        <CommentSection entityType="expense" entityId={expense.id} />
-      </div>
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
           <div className="bg-background rounded-lg max-w-sm w-full p-6 space-y-4">
             <h2 className="text-xl font-bold">Delete Expense</h2>
             <p className="text-muted-foreground">

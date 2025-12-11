@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Send, Loader2 } from "lucide-react"
 import { api } from "../utils/api"
+import { useData } from "../context/DataContext"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
@@ -68,68 +69,93 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
 
   if (isLoading) {
       return (
-          <div className="h-[300px] flex items-center justify-center bg-muted/20 rounded-lg">
+          <div className="flex-1 flex items-center justify-center min-h-[200px] bg-muted/5 rounded-lg">
              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
       )
   }
 
+  const { currentUser } = useData()
+
+  // ... (useQuery hooks) ...
+
   return (
-    <div className={cn("flex flex-col h-[400px] bg-card border rounded-xl overflow-hidden", className)}>
-        <div className="p-3 border-b bg-muted/30">
+    <div className={cn("flex flex-col flex-1 min-h-0 w-full", className)}>
+        <div className="px-4 py-2 border-b bg-muted/30 flex-none">
             <h3 className="font-semibold text-sm">Activity & Comments</h3>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-6" ref={scrollRef}>
             {comments.length === 0 ? (
-                <p className="text-center text-muted-foreground text-sm py-8">No activity yet.</p>
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm">
+                    <p>No activity yet.</p>
+                </div>
             ) : (
-                comments.map((comment: Comment) => (
-                    <div key={comment.id} className={cn("flex gap-3", comment.is_system ? "justify-center" : "")}>
-                       {comment.is_system ? (
-                           <div className="text-center space-y-1 my-2">
-                               <p className="text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full inline-block">
-                                  <span className="font-medium text-foreground mr-1">{comment.author.name}</span>
-                                  {comment.content}
-                               </p>
-                               <p className="text-[10px] text-muted-foreground">
-                                   {formatTime(comment.created_at)}
-                               </p>
-                           </div>
-                       ) : (
-                           <>
-                             <Avatar className="h-8 w-8 mt-1">
+                comments.map((comment: Comment) => {
+                    const isMe = comment.user_id === currentUser.id
+                    
+                    if (comment.is_system) {
+                        return (
+                            <div key={comment.id} className="flex justify-center my-4">
+                               <div className="text-center space-y-1">
+                                   <p className="text-xs text-muted-foreground bg-muted/50 px-3 py-1 rounded-full inline-block border">
+                                      <span className="font-medium text-foreground mr-1">{comment.author.name}</span>
+                                      {comment.content}
+                                   </p>
+                                   <p className="text-[10px] text-muted-foreground">
+                                       {formatTime(comment.created_at)}
+                                   </p>
+                               </div>
+                            </div>
+                        )
+                    }
+
+                    return (
+                        <div key={comment.id} className={cn("flex gap-3 max-w-[85%]", isMe ? "ml-auto flex-row-reverse" : "mr-auto")}>
+                             <Avatar className="h-8 w-8 mt-auto flex-shrink-0">
                                 <AvatarImage src={comment.author.avatar} />
                                 <AvatarFallback>{comment.author.name[0]}</AvatarFallback>
                              </Avatar>
-                             <div className="flex-1 space-y-1">
-                                 <div className="flex items-baseline justify-between gap-2">
-                                     <span className="text-sm font-semibold">{comment.author.name}</span>
-                                     <span className="text-[10px] text-muted-foreground">{formatTime(comment.created_at)}</span>
-                                 </div>
-                                 <div className="bg-muted/30 p-2.5 rounded-lg rounded-tl-none text-sm">
+                             
+                             <div className={cn("flex flex-col space-y-1 min-w-0", isMe ? "items-end" : "items-start")}>
+                                 {!isMe && <span className="text-xs font-semibold px-1">{comment.author.name}</span>}
+                                 
+                                 <div className={cn(
+                                     "p-3 rounded-2xl text-sm break-words shadow-sm",
+                                     isMe 
+                                       ? "bg-primary text-primary-foreground rounded-br-none" 
+                                       : "bg-muted text-foreground rounded-bl-none"
+                                 )}>
                                      {comment.content}
                                  </div>
+                                 <span className="text-[10px] text-muted-foreground px-1">
+                                     {formatTime(comment.created_at)}
+                                 </span>
                              </div>
-                           </>
-                       )}
-                    </div>
-                ))
+                        </div>
+                    )
+                })
             )}
         </div>
 
-        <div className="p-3 border-t bg-background">
-            <form onSubmit={handleSubmit} className="flex gap-2">
+        <div className="p-3 border-t bg-background flex-none">
+             <div className="flex gap-2 items-center bg-muted/30 p-1.5 rounded-full border focus-within:ring-2 ring-primary/20 transition-all">
                 <Input 
-                   placeholder="Write a comment..." 
+                   placeholder="Type a message..." 
                    value={content}
                    onChange={(e) => setContent(e.target.value)}
-                   className="flex-1"
+                   className="flex-1 border-none shadow-none bg-transparent focus-visible:ring-0 h-10 px-4"
                 />
-                <Button type="submit" size="icon" disabled={addCommentMutation.isPending || !content.trim()}>
+                <Button 
+                    type="button" 
+                    size="icon" 
+                    onClick={(e) => { e.preventDefault(); handleSubmit(e as any) }}
+                    disabled={addCommentMutation.isPending || !content.trim()}
+                    className="h-9 w-9 rounded-full shrink-0"
+                >
                     {addCommentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
-            </form>
+            </div>
         </div>
     </div>
   )
