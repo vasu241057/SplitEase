@@ -51,6 +51,69 @@ router.get('/', async (req, res) => {
   res.json(formatted);
 });
 
+// Helper to notify participants
+const notifyExpenseParticipants = async (
+  req: any,
+  expenseId: string,
+  action: string,
+  overrideBody?: string
+) => {
+  const envKey = process.env as any;
+  const env = {
+      SUPABASE_URL: envKey.SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: envKey.SUPABASE_SERVICE_ROLE_KEY,
+      VAPID_PUBLIC_KEY: envKey.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: envKey.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: envKey.VAPID_SUBJECT
+  };
+
+  if (!env.VAPID_PUBLIC_KEY) return;
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data: expense } = await supabase
+      .from('expenses')
+      .select('*, expense_splits(*)')
+      .eq('id', expenseId)
+      .single();
+
+    if (!expense) return;
+
+    let recipientIds: string[] = [];
+    if (expense.expense_splits) {
+      recipientIds = expense.expense_splits.map((s: any) => s.user_id);
+    }
+    
+    // Add Payer if not in splits (rare but possible)
+    if (expense.payer_user_id) recipientIds.push(expense.payer_user_id);
+
+    // Filter sender
+    const currentUserId = req.user.id;
+    recipientIds = recipientIds.filter(id => id !== currentUserId);
+    recipientIds = [...new Set(recipientIds)];
+
+    if (recipientIds.length === 0) return;
+
+    // Get Sender Name
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', currentUserId)
+      .single();
+    
+    const senderName = profile?.full_name || 'Someone';
+    const title = `${senderName} ${action}`;
+    const body = overrideBody || expense.description || 'Expense details';
+    const url = `/expense/${expenseId}`;
+
+    const { sendPushNotification } = await import('../utils/push');
+    await sendPushNotification(env, recipientIds, title, body, url);
+
+  } catch (error) {
+    console.error('Failed to send expense notification:', error);
+  }
+};
+
 router.post('/', async (req, res) => {
   const { description, amount, date, payerId, splits, groupId } = req.body;
   const supabase = createSupabaseClient();
@@ -108,6 +171,9 @@ router.post('/', async (req, res) => {
     is_system: true
   });
 
+  // Notify
+  await notifyExpenseParticipants(req, expense.id, 'added an expense');
+
   res.status(201).json(newExpense);
 });
 
@@ -158,6 +224,9 @@ router.put('/:id', async (req, res) => {
 
   await recalculateBalances(supabase);
 
+  // Notify
+  await notifyExpenseParticipants(req, id, 'updated an expense', `${description} was updated`);
+
   res.json({ id, description, amount, date, payerId, splits, groupId });
 });
 
@@ -165,6 +234,9 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   const supabase = createSupabaseClient();
 
+  // Notify BEFORE deletion/hiding, so we can still fetch details.
+  // Actually we just mark as deleted, so fetching is fine.
+  
   const { error } = await supabase
     .from('expenses')
     .update({ deleted: true })
@@ -182,6 +254,9 @@ router.delete('/:id', async (req, res) => {
     content: 'deleted this expense',
     is_system: true
   });
+
+  // Notify
+  await notifyExpenseParticipants(req, id, 'deleted an expense');
 
   res.json({ message: "Expense deleted successfully" });
 });
@@ -208,6 +283,9 @@ router.post('/:id/restore', async (req, res) => {
     content: 'restored this expense',
     is_system: true
   });
+
+  // Notify
+  await notifyExpenseParticipants(req, id, 'restored an expense');
 
   res.json(data);
 });

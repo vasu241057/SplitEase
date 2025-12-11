@@ -103,7 +103,6 @@ router.post('/:entityType/:entityId', async (req, res) => {
   };
 
   // Trigger Notification
-  // backend: express on cloudflare workers (nodejs_compat) uses process.env
   const envKey = process.env as any;
   const env = {
       SUPABASE_URL: envKey.SUPABASE_URL,
@@ -113,66 +112,46 @@ router.post('/:entityType/:entityId', async (req, res) => {
       VAPID_SUBJECT: envKey.VAPID_SUBJECT
   };
 
-  console.error('[PUSH LOG] Env available (via process.env):', !!env.VAPID_PUBLIC_KEY);
-  
   if (env.VAPID_PUBLIC_KEY) { 
-     (async () => {
         try {
-            console.error('[PUSH LOG] Starting notification trigger for entity:', entityType, entityId);
             let recipientIds: string[] = [];
             const title = `New comment from ${profile?.full_name || 'Someone'}`;
             const body = content;
             const url = `/${entityType === 'expense' ? 'expense' : 'settle'}/${entityId}`;
 
             if (entityType === 'expense') {
-                const { data: expense, error: expError } = await supabase
+                const { data: expense } = await supabase
                     .from('expenses')
-                    .select('*, splits(*)')
+                    .select('*, expense_splits(*)')
                     .eq('id', entityId)
                     .single();
                 
-                if (expError) console.error('[PUSH LOG] Error fetching expense:', expError);
-
-                if (expense) {
-                    recipientIds = expense.splits.map((s: any) => s.user_id);
-                    console.error('[PUSH LOG] Expense participants:', recipientIds);
+                if (expense && expense.expense_splits) {
+                    recipientIds = expense.expense_splits.map((s: any) => s.user_id);
                 }
             } else if (entityType === 'payment') {
-                const { data: transaction, error: txError } = await supabase
+                const { data: transaction } = await supabase
                     .from('transactions')
                     .select('*')
                     .eq('id', entityId)
                     .single();
-
-                if (txError) console.error('[PUSH LOG] Error fetching transaction:', txError);
 
                 if (transaction) {
                     recipientIds = [transaction.from_id, transaction.to_id];
                 }
             }
             
-            console.error('[PUSH LOG] Original recipients:', recipientIds);
-            console.error('[PUSH LOG] Current user (sender):', userId);
-
             // Remove sender
             recipientIds = recipientIds.filter(id => id !== userId);
             recipientIds = [...new Set(recipientIds)]; // unique
 
-            console.error('[PUSH LOG] Final recipients after filtering:', recipientIds);
-
             if (recipientIds.length > 0) {
-                 console.error('[PUSH LOG] Calling sendPushNotification...');
                  const { sendPushNotification } = await import('../utils/push');
                  await sendPushNotification(env, recipientIds, title, body, url);
-            } else {
-                console.error('[PUSH LOG] No recipients left to notify.');
             }
         } catch (err) {
-            console.error('[PUSH LOG] Failed to trigger notification:', err);
+            console.error('Failed to trigger notification:', err);
         }
-     })();
-  } else {
-      console.error('[PUSH LOG] ENV is missing! Cannot send notification.');
   }
 
   res.status(201).json(enriched);

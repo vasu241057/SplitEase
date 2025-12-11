@@ -1,10 +1,12 @@
 self.addEventListener('push', function(event) {
   if (event.data) {
     const data = event.data.json();
+    console.log('[SW] Push Data:', data);
     const options = {
       body: data.body,
       icon: data.icon || '/logo.jpg',
       badge: '/logo.jpg',
+      requireInteraction: true, // Force notification to stay on screen
       data: {
         url: data.url
       }

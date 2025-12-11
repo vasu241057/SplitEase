@@ -52,6 +52,74 @@ router.get('/', async (req, res) => {
   res.json(formatted);
 });
 
+// Helper to notify participants
+const notifyTransactionParticipants = async (
+  req: any,
+  transactionId: string,
+  action: string,
+  overrideBody?: string
+) => {
+  const envKey = process.env as any;
+  const env = {
+      SUPABASE_URL: envKey.SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: envKey.SUPABASE_SERVICE_ROLE_KEY,
+      VAPID_PUBLIC_KEY: envKey.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: envKey.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: envKey.VAPID_SUBJECT
+  };
+
+  if (!env.VAPID_PUBLIC_KEY) return;
+
+  try {
+    const supabase = createSupabaseClient();
+    const { data: transaction } = await supabase
+      .from('transactions')
+      .select('*, friend:friends(*)')
+      .eq('id', transactionId)
+      .single();
+
+    if (!transaction) return;
+
+    let recipientIds: string[] = [];
+
+    // Participants: Owner (payer/payee) and Linked User (Friend)
+    // We already have from_id and to_id logic in the router, but let's re-derive for robustness or just grab involved parties.
+    // Actually, just grab linked_user_id and owner_id from the friend relation.
+    
+    // friend.owner_id is one party
+    // friend.linked_user_id is the other (if it creates a valid user)
+    
+    if (transaction.friend?.owner_id) recipientIds.push(transaction.friend.owner_id);
+    if (transaction.friend?.linked_user_id) recipientIds.push(transaction.friend.linked_user_id);
+    
+    // Filter sender
+    const currentUserId = req.user.id;
+    recipientIds = recipientIds.filter(id => id !== currentUserId);
+    recipientIds = [...new Set(recipientIds)];
+
+    if (recipientIds.length === 0) return;
+
+    // Get Sender Name
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('full_name')
+      .eq('id', currentUserId)
+      .single();
+    
+    const senderName = profile?.full_name || 'Someone';
+    // 'recorded a payment' or 'deleted a payment'
+    const title = `${senderName} ${action}`;
+    const body = overrideBody || `Amount: ${transaction.amount}`;
+    const url = `/settle/${transactionId}`; // Assuming there is a verify page or just the list
+
+    const { sendPushNotification } = await import('../utils/push');
+    await sendPushNotification(env, recipientIds, title, body, url);
+
+  } catch (error) {
+    console.error('Failed to send transaction notification:', error);
+  }
+};
+
 router.post('/settle-up', async (req, res) => {
   const { friendId, amount, type } = req.body;
   const supabase = createSupabaseClient();
@@ -104,6 +172,9 @@ router.post('/settle-up', async (req, res) => {
     is_system: true
   });
 
+  // Notify
+  await notifyTransactionParticipants(req, data.id, 'settled up');
+
   res.status(201).json(formatted);
 });
 
@@ -128,6 +199,9 @@ router.delete('/:id', async (req, res) => {
     content: 'deleted this payment',
     is_system: true
   });
+
+  // Notify
+  await notifyTransactionParticipants(req, id, 'deleted a payment');
 
   res.json({ message: "Transaction deleted successfully" });
 });
@@ -177,6 +251,9 @@ router.post('/:id/restore', async (req, res) => {
     content: 'restored this payment',
     is_system: true
   });
+
+  // Notify
+  await notifyTransactionParticipants(req, id, 'restored a payment');
 
   res.json(formatted);
 });
