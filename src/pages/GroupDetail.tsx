@@ -12,7 +12,8 @@ import { api } from "../utils/api"
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser } = useData()
+  const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser, loading } = useData() 
+  
   const [activeTab, setActiveTab] = useState<"expenses" | "members">("expenses")
   const [showAddMember, setShowAddMember] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -25,6 +26,24 @@ export function GroupDetail() {
 
   const group = groups.find((g) => g.id === id)
 
+  // Filter friends not in group - call useMemo UNCONDITIONALLY
+  const availableFriends = useMemo(() => {
+    if (!group) return []
+    return friends.filter(
+      (friend) =>
+        !group.members.includes(friend.id) &&
+        friend.name.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  }, [friends, group?.members, searchQuery])
+
+  if (loading) {
+    return (
+       <div className="flex items-center justify-center min-h-screen">
+          <p className="text-muted-foreground">Loading group...</p>
+       </div>
+    )
+  }
+
   if (!group) {
     return <div>Group not found</div>
   }
@@ -35,15 +54,6 @@ export function GroupDetail() {
     if (id === currentUser.id) return "You"
     return friends.find((f) => f.id === id || f.linked_user_id === id)?.name || "Unknown"
   }
-
-  // Filter friends not in group
-  const availableFriends = useMemo(() => {
-    return friends.filter(
-      (friend) =>
-        !group.members.includes(friend.id) &&
-        friend.name.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  }, [friends, group.members, searchQuery])
 
   const handleAddMember = async (friendId: string) => {
     try {

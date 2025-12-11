@@ -152,73 +152,78 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   // --- Exposed Handlers (Adapters to match old interface) ---
 
-  const addExpense = async (expense: Omit<Expense, "id" | "date">) => {
+  const addExpense = React.useCallback(async (expense: Omit<Expense, "id" | "date">) => {
     await addExpenseMutation.mutateAsync(expense)
-  }
+  }, [addExpenseMutation])
 
-  const addFriend = async (name: string, email?: string) => {
+  const addFriend = React.useCallback(async (name: string, email?: string) => {
      await addFriendMutation.mutateAsync({ name, email })
-  }
+  }, [addFriendMutation])
 
-  const addGroup = async (name: string, type: Group["type"], members: string[]) => {
+  const addGroup = React.useCallback(async (name: string, type: Group["type"], members: string[]) => {
       await addGroupMutation.mutateAsync({ name, type, members })
-  }
+  }, [addGroupMutation])
 
-  const settleUp = async (friendId: string, amount: number, type: "paid" | "received") => {
+  const settleUp = React.useCallback(async (friendId: string, amount: number, type: "paid" | "received") => {
       await settleUpMutation.mutateAsync({ friendId, amount, type })
-  }
+  }, [settleUpMutation])
 
-  const deleteTransaction = async (id: string) => {
+  const deleteTransaction = React.useCallback(async (id: string) => {
       await deleteTransactionMutation.mutateAsync(id)
-  }
+  }, [deleteTransactionMutation])
 
-  const restoreTransaction = async (id: string) => {
+  const restoreTransaction = React.useCallback(async (id: string) => {
       await restoreTransactionMutation.mutateAsync(id)
-  }
+  }, [restoreTransactionMutation])
 
-  const deleteExpense = async (id: string) => {
+  const deleteExpense = React.useCallback(async (id: string) => {
       await deleteExpenseMutation.mutateAsync(id)
-  }
+  }, [deleteExpenseMutation])
 
-  const restoreExpense = async (id: string) => {
+  const restoreExpense = React.useCallback(async (id: string) => {
       await restoreExpenseMutation.mutateAsync(id)
-  }
+  }, [restoreExpenseMutation])
 
-  const updateExpense = async (expense: Expense) => {
+  const updateExpense = React.useCallback(async (expense: Expense) => {
       await updateExpenseMutation.mutateAsync(expense)
-  }
+  }, [updateExpenseMutation])
 
-  const refreshGroups = async () => {
+  const refreshGroups = React.useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['groups'] })
-  }
+  }, [queryClient])
 
-  const refreshExpenses = async () => {
+  const refreshExpenses = React.useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['expenses'] })
-  }
+  }, [queryClient])
+
+  const value = React.useMemo(() => ({
+    currentUser,
+    friends,
+    groups,
+    expenses,
+    allExpenses,
+    transactions,
+    addExpense,
+    addFriend,
+    addGroup,
+    settleUp,
+    deleteExpense,
+    deleteTransaction,
+    restoreExpense,
+    restoreTransaction,
+    updateExpense,
+    refreshGroups,
+    refreshExpenses,
+    loading,
+  }), [
+    currentUser, friends, groups, expenses, allExpenses, transactions,
+    addExpense, addFriend, addGroup, settleUp, deleteExpense, 
+    deleteTransaction, restoreExpense, restoreTransaction, updateExpense,
+    refreshGroups, refreshExpenses, loading
+  ])
 
   return (
-    <DataContext.Provider
-      value={{
-        currentUser,
-        friends,
-        groups,
-        expenses,
-        allExpenses,
-        transactions,
-        addExpense,
-        addFriend,
-        addGroup,
-        settleUp,
-        deleteExpense,
-        deleteTransaction,
-        restoreExpense,
-        restoreTransaction,
-        updateExpense,
-        refreshGroups,
-        refreshExpenses,
-        loading,
-      }}
-    >
+    <DataContext.Provider value={value}>
       {children}
     </DataContext.Provider>
   )

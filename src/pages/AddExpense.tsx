@@ -16,7 +16,7 @@ type SplitMode = "you-equal" | "you-full" | "friend-equal" | "friend-full"
 export function AddExpense() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { friends, groups, addExpense, updateExpense, currentUser, loading } = useData()
+  const { friends, groups, addExpense, updateExpense, deleteExpense, currentUser, loading } = useData()
   
   const [step, setStep] = useState<Step>(1)
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
@@ -136,7 +136,8 @@ export function AddExpense() {
 
   const handleGroupSelect = (group: Group) => {
     setSelectedGroup(group)
-    // Don't clear friends, allow adding friends to group expense
+    // Remove friends who are already in the group to avoid redundancy
+    setSelectedFriends(prev => prev.filter(f => !group.members.includes(f.id)))
     setStep(2)
   }
 
@@ -243,6 +244,12 @@ export function AddExpense() {
               paid: (groupPayments[uid] || 0) > 0
            }))
            
+           // If Editing, we need to DELETE the original expense first because we are potentially 
+           // splitting 1 expense into 2 (Group + Friend). Update isn't sufficient.
+           if (location.state?.editExpense) {
+              await deleteExpense(location.state.editExpense.id)
+           }
+
            await addExpense({
               description: `${description} (Group Split)`,
               amount: groupAmount,
