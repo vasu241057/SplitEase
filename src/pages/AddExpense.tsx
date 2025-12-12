@@ -63,7 +63,7 @@ export function AddExpense() {
        }
        
        // Set Friends (derive from splits who are NOT group members and NOT current user)
-       const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members || []) : []
+       const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members.filter(m => m.userId !== currentUser.id).map(m => m.id) || []) : []
        const friendIds = editExp.splits
           .map((s: any) => s.userId)
           .filter((uid: string) => {
@@ -142,7 +142,9 @@ export function AddExpense() {
         // Combine Group Members + Selected Friends
         const members = new Set([currentUser.id])
         if (selectedGroup) {
-        selectedGroup.members.forEach(m => members.add(m))
+        selectedGroup.members.forEach(m => {
+            if (m.userId !== currentUser.id) members.add(m.id)
+        })
         }
         if (selectedFriends.length > 0) {
         selectedFriends.forEach(f => members.add(f.id))
@@ -162,7 +164,7 @@ export function AddExpense() {
     return friends.filter(friend => 
       friend.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
       !selectedFriends.find(f => f.id === friend.id) &&
-      (!selectedGroup || !selectedGroup.members.includes(friend.id)) // Exclude group members
+      (!selectedGroup || !selectedGroup.members.some(m => m.id === friend.id)) // Exclude group members
     )
   }, [friends, searchQuery, selectedFriends, selectedGroup])
 
@@ -182,7 +184,7 @@ export function AddExpense() {
   const handleGroupSelect = (group: Group) => {
     setSelectedGroup(group)
     // Remove friends who are already in the group to avoid redundancy
-    setSelectedFriends(prev => prev.filter(f => !group.members.includes(f.id)))
+    setSelectedFriends(prev => prev.filter(f => !group.members.some(m => m.id === f.id)))
     setStep(2)
   }
 
@@ -192,6 +194,13 @@ export function AddExpense() {
 
   const getMemberDetails = (id: string) => {
     if (id === currentUser.id) return { name: "You", avatar: currentUser.avatar }
+    
+    // Check Selected Group first (it has rich member data)
+    if (selectedGroup) {
+        const member = selectedGroup.members.find(m => m.id === id || m.userId === id)
+        if (member) return member
+    }
+
     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
     return friend || { name: "Unknown", avatar: undefined }
   }
@@ -213,7 +222,12 @@ export function AddExpense() {
            // but here 'members' are IDs. Let's assume 'members' + 'currentUser'.
            // And 'selectedFriends' are extra.
            
-           const groupMemberIds = Array.from(new Set([currentUser.id, ...selectedGroup.members]))
+           const groupMemberIds = Array.from(new Set([
+               currentUser.id, 
+               ...selectedGroup.members
+                   .filter(m => m.userId !== currentUser.id) // Filter out self-friend record
+                   .map(m => m.id)
+           ]))
            const friendIds = selectedFriends.map(f => f.id).filter(id => !groupMemberIds.includes(id))
            const allParticipants = [...groupMemberIds, ...friendIds]
            const totalParticipants = allParticipants.length
@@ -499,7 +513,12 @@ export function AddExpense() {
   const activeMembers = useMemo(() => {
     const members = new Set([currentUser.id])
     if (selectedGroup) {
-      selectedGroup.members.forEach(m => members.add(m))
+      selectedGroup.members.forEach(m => {
+          // Avoid adding self-friend ID, we already added currentUser.id (which represents 'You')
+          if (m.userId !== currentUser.id) {
+              members.add(m.id)
+          }
+      })
     }
     selectedFriends.forEach(f => members.add(f.id))
     return Array.from(members)

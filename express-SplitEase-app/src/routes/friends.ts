@@ -16,7 +16,11 @@ router.get('/', async (req, res) => {
     .eq('owner_id', userId);
   
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  
+  // Filter out the "Self" friend record (used for group membership but hidden in friends list)
+  const filteredData = data.filter((f: any) => f.linked_user_id !== userId);
+  
+  res.json(filteredData);
 });
 
 router.post('/', async (req, res) => {

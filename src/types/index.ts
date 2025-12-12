@@ -10,10 +10,17 @@ export type Friend = User & {
   linked_user_id?: string
 }
 
+export type GroupMember = {
+  id: string; // friend_id
+  name: string;
+  avatar: string; // now mandatory in return (can be empty string)
+  userId: string | null; // linked_user_id
+}
+
 export type Group = {
   id: string
   name: string
-  members: string[] // User IDs
+  members: GroupMember[] 
   type: "trip" | "home" | "couple" | "other"
 }
 
@@ -46,5 +53,6 @@ export type Transaction = {
   amount: number
   date: string
   description?: string
+  groupId?: string
   deleted?: boolean
 }

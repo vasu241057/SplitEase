@@ -8,9 +8,10 @@ import { cn } from "../utils/cn"
 import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
+import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
 
 export function Friends() {
-  const { friends, loading } = useData()
+  const { friends, loading, currentUser, groups, expenses, transactions } = useData()
   
   const totalOwed = friends
     .filter((f) => f.balance > 0)
@@ -69,8 +70,8 @@ export function Friends() {
           friends.map((friend) => (
             <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
-                <div className="flex items-center gap-4">
-                  <Avatar>
+                <div className="flex items-start gap-4">
+                  <Avatar className="mt-1">
                     <AvatarImage src={friend.avatar} />
                     <AvatarFallback>
                       {friend.name
@@ -80,35 +81,54 @@ export function Friends() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{friend.name}</p>
-                    <p
-                      className={cn(
-                        "text-sm",
-                        friend.balance > 0
-                          ? "text-green-600"
-                          : friend.balance < 0
-                          ? "text-red-600"
-                          : "text-muted-foreground"
-                      )}
-                    >
-                      {friend.balance > 0
-                        ? "owes you"
-                        : friend.balance < 0
-                        ? "you owe"
-                        : "settled"}
-                    </p>
-                  </div>
-                  <div
-                    className={cn(
-                      "font-bold",
-                      friend.balance > 0
-                        ? "text-green-600"
-                        : friend.balance < 0
-                        ? "text-red-600"
-                        : "text-muted-foreground"
-                    )}
-                  >
-                    {friend.balance !== 0 && `₹${Math.abs(friend.balance)}`}
+                    <div className="flex justify-between items-start mb-2">
+                        <p className="font-medium truncate text-lg">{friend.name}</p>
+                        <div className="text-right">
+                             <p
+                                className={cn(
+                                    "text-xs font-medium mb-1",
+                                    friend.balance > 0 ? "text-green-600" : friend.balance < 0 ? "text-red-600" : "text-muted-foreground"
+                                )}
+                              >
+                                {friend.balance > 0 ? "owes you" : friend.balance < 0 ? "you owe" : "settled"}
+                              </p>
+                              <div
+                                className={cn(
+                                    "font-bold text-lg leading-none",
+                                    friend.balance > 0 ? "text-green-600" : friend.balance < 0 ? "text-red-600" : "text-muted-foreground"
+                                )}
+                              >
+                                {friend.balance !== 0 && `₹${Math.abs(friend.balance).toFixed(2)}`}
+                              </div>
+                        </div>
+                    </div>
+                    
+                    {/* Buckets Breakdown */}
+                    {(() => {
+                         const breakdown = getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
+                         const visibleBreakdown = breakdown.slice(0, 3);
+                         const remaining = breakdown.length - 3;
+                         
+                         if (breakdown.length === 0) return null;
+
+                         return (
+                            <div className="space-y-1 mt-2">
+                                {visibleBreakdown.map((item, idx) => (
+                                    <div key={idx} className="flex justify-between text-xs">
+                                        <span className="text-muted-foreground truncate max-w-[150px]">{item.isGroup ? `In "${item.name}"` : item.name}</span>
+                                        <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
+                                            {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
+                                        </span>
+                                    </div>
+                                ))}
+                                {remaining > 0 && (
+                                    <p className="text-xs text-muted-foreground italic">
+                                        + {remaining} more balances
+                                    </p>
+                                )}
+                            </div>
+                         )
+                    })()}
                   </div>
                 </div>
               </Card>

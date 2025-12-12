@@ -13,7 +13,7 @@ import { CommentSection } from "../components/CommentSection"
 export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { allExpenses, friends, deleteExpense, restoreExpense, currentUser, loading } = useData()
+  const { allExpenses, friends, groups, deleteExpense, restoreExpense, currentUser, loading } = useData()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
@@ -22,17 +22,40 @@ export function ExpenseDetail() {
 
   // Helper functions must be defined before use if used in useMemo or other hooks
   const getMemberName = (id: string) => {
+    // 1. Check Current User
     if (id === "currentUser" || id === currentUser.id) return "You"
-    if (!friends) return "Unknown"
-    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-    return friend ? friend.name : "Unknown"
+    
+    // 2. Check Friends List
+    const friend = friends?.find(f => f.id === id || f.linked_user_id === id)
+    if (friend) return friend.name
+    
+    // 3. Check Group Members (if expense belongs to a group)
+    if (expense?.groupId) {
+        const group = groups.find(g => g.id === expense.groupId)
+        const member = group?.members.find(m => m.id === id || m.userId === id)
+        if (member) {
+            console.log(`[ExpenseDetail] Resolved ${id} via Group ${group?.name}: ${member.name}`)
+            return member.name
+        }
+    }
+
+    console.warn(`[ExpenseDetail] Failed to resolve name for ${id}`)
+    return "Unknown"
   }
   
   const getMemberAvatar = (id: string) => {
      if (id === "currentUser" || id === currentUser.id) return currentUser.avatar
-     if (!friends) return undefined
-     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-     return friend?.avatar
+     
+     const friend = friends?.find(f => f.id === id || f.linked_user_id === id)
+     if (friend) return friend.avatar
+
+     if (expense?.groupId) {
+        const group = groups.find(g => g.id === expense.groupId)
+        const member = group?.members.find(m => m.id === id || m.userId === id)
+        if (member) return member.avatar
+     }
+     
+     return undefined
   }
 
   // Determine who paid
@@ -128,7 +151,7 @@ export function ExpenseDetail() {
     <div className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 z-40 bg-background flex flex-col">
       <div className="flex-none container mx-auto px-4 pt-4 pb-3 space-y-6 max-h-[60vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="sticky top-0 z-50 bg-background flex items-center justify-between pb-1">
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-6 w-6" />
           </Button>
@@ -178,7 +201,7 @@ export function ExpenseDetail() {
                 <span className="font-medium text-muted-foreground">{paidText}</span>
              </div>
              
-             <div className="space-y-4">
+             <div className="space-y-1">
                 {splits.map(split => {
                    const name = getMemberName(split.userId)
                    const avatar = getMemberAvatar(split.userId)

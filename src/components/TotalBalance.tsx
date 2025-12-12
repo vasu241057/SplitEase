@@ -33,7 +33,7 @@ export function TotalBalance({ amount }: TotalBalanceProps) {
           isNegative ? "text-red-700 dark:text-red-300" :
           "text-foreground"
         )}>
-          {amount !== 0 && `₹${Math.abs(amount)}`}
+          {amount !== 0 && `₹${Math.abs(amount).toFixed(2)}`}
           {amount === 0 && "₹0"}
         </div>
       </CardContent>

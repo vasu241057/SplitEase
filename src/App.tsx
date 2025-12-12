@@ -53,6 +53,7 @@ function App() {
             <Route path="/" element={<Navigate to="/friends" replace />} />
             <Route path="/settle-up" element={<SettleUp />} />
             <Route path="/create-group" element={<CreateGroup />} />
+            <Route path="/add-expense" element={<AddExpense />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/:id" element={<GroupDetail />} />
             <Route path="/friends" element={<Friends />} />
@@ -65,12 +66,12 @@ function App() {
         </Routes>
 
         <AnimatePresence>
-          {location.pathname === "/add-expense" && (
+          {location.pathname === "/add-expense" && state?.backgroundLocation && (
             <Routes location={location}>
               <Route path="/add-expense" element={<RequireAuth><AddExpense /></RequireAuth>} />
             </Routes>
           )}
-          {location.pathname === "/create-group" && (
+          {location.pathname === "/create-group" && state?.backgroundLocation && (
             <Routes location={location}>
               <Route path="/create-group" element={<RequireAuth><CreateGroup /></RequireAuth>} />
             </Routes>

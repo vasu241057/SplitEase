@@ -9,19 +9,44 @@ import { cn } from "../utils/cn"
 
 export function SettleUp() {
   const navigate = useNavigate()
-  const { friends, settleUp, groups } = useData()
+  const { friends, settleUp, groups, currentUser } = useData()
   
   const location = useLocation()
   const [friendId, setFriendId] = useState(location.state?.friendId || "")
   const groupId = location.state?.groupId || ""
-  const [amount, setAmount] = useState("")
+  const [amount, setAmount] = useState(location.state?.amount || "")
   const [direction, setDirection] = useState<"paying" | "receiving">(
     (location.state?.defaultDirection as "paying" | "receiving") || "paying"
   )
   const [loading, setLoading] = useState(false)
+  
+  console.log("[SettleUp] Render", {
+      state: location.state,
+      groupId,
+      friendId,
+      totalGroups: groups.length
+  })
 
   // Filter groups where both I and the selected friend are members
   const selectedGroup = groups.find(g => g.id === groupId);
+
+  // Derive available users to settle with
+  // If Group is selected: Show Group Members (excluding me)
+  // If No Group: Show Friends
+  const availableUsers = selectedGroup 
+    ? selectedGroup.members
+        .filter(m => m.id !== currentUser.id && m.userId !== currentUser.id)
+        .map(m => {
+            // Try to resolve rich details if available in friend list, else use group member details
+            // GroupMember already has name/avatar.
+            return {
+                id: m.id,
+                name: m.name,
+                avatar: m.avatar,
+                isGroupMember: true
+            }
+        })
+    : friends.map(f => ({ id: f.id, name: f.name, avatar: f.avatar, isGroupMember: false }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -72,8 +97,8 @@ export function SettleUp() {
             disabled={loading || !!location.state?.friendId} // Lock friend if pre-selected (Group flow usually pre-selects)
           >
             <option value="">Select a friend</option>
-            {friends.map(friend => (
-              <option key={friend.id} value={friend.id}>{friend.name}</option>
+            {availableUsers.map(user => (
+              <option key={user.id} value={user.id}>{user.name}</option>
             ))}
           </select>
         </div>

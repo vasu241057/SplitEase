@@ -42,6 +42,7 @@ router.get('/', async (req, res) => {
     return {
        ...t,
        friendId: t.friend_id,
+       groupId: t.group_id,
        fromId,
        toId,
        deleted: isDeleted,
@@ -158,6 +159,7 @@ router.post('/settle-up', async (req, res) => {
   const formatted = {
     ...data,
     friendId: data.friend_id,
+    groupId: data.group_id,
     fromId,
     toId,
     description: "Settle Up",
@@ -239,6 +241,7 @@ router.post('/:id/restore', async (req, res) => {
   const formatted = {
     ...data,
     friendId: data.friend_id,
+    groupId: data.group_id,
     fromId,
     toId,
     description: "Settle Up"

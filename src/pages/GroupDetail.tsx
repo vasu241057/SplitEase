@@ -30,9 +30,11 @@ import { api } from "../utils/api"
   // Filter friends not in group - call useMemo UNCONDITIONALLY
   const availableFriends = useMemo(() => {
     if (!group) return []
+    // Extract member IDs for checking
+    const memberIds = group.members.map(m => m.id);
     return friends.filter(
       (friend) =>
-        !group.members.includes(friend.id) &&
+        !memberIds.includes(friend.id) &&
         friend.name.toLowerCase().includes(searchQuery.toLowerCase())
     )
   }, [friends, group?.members, searchQuery])
@@ -51,8 +53,21 @@ import { api } from "../utils/api"
 
   const groupExpenses = expenses.filter((e) => e.groupId === group.id)
 
+  console.log("[GroupDetail] Render:", { 
+      groupId: group.id, 
+      memberCount: group.members.length, 
+      expensesCount: groupExpenses.length,
+      currentUser: currentUser.id
+  });
+
   const getMemberName = (id: string) => {
     if (id === currentUser.id) return "You"
+    const member = group.members.find(m => m.id === id);
+    if (member) {
+        if (member.userId === currentUser.id) return "You";
+        return member.name;
+    }
+    // Fallback to searching friends if not in group members (rare for group detail context but safe)
     return friends.find((f) => f.id === id || f.linked_user_id === id)?.name || "Unknown"
   }
 
@@ -109,75 +124,104 @@ import { api } from "../utils/api"
       </div>
 
       {/* Group Balance Summary */}
-      <div className="space-y-4">
-        {group.members.map(memberId => {
-            if (memberId === currentUser.id) return null;
-            const friend = friends.find(f => f.id === memberId || f.linked_user_id === memberId);
-            if (!friend) return null;
-
-            // Calculate Balance specific to this Group
-            let balance = 0;
-
-            // 1. Expense Debts
-            groupExpenses.forEach(expense => {
-                if (expense.payerId === currentUser.id) {
-                    // I paid, they owe me their split
-                    const split = expense.splits.find(s => s.userId === memberId);
-                    if (split) balance += (split.amount || 0);
-                } else if (expense.payerId === memberId) {
-                    // They paid, I owe them my split
-                    const split = expense.splits.find(s => s.userId === currentUser.id);
-                    if (split) balance -= (split.amount || 0);
-                }
-                // If 3rd party paid, no impact on my relationship with this member directly in 2-way?
-                // Actually in Splitwise, debt is strictly bilateral.
-                // If C paid, I owe C. Member B owes C. Me and B have no debt change.
-                // So yes, strictly Payer vs User.
-            });
-
-            // 2. Settle Up (Transactions linked to this group)
-            // We need access to all transactions. We extracted 'transactions' from useData below.
-            // Wait, we need to add 'transactions' to destructuring in start of component.
-            const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-            
-            groupTransactions.forEach((t: any) => {
-                // We need to know who paid whom.
-                // In transactions list: fromId and toId are pre-calculated by backend/hook? 
-                // Let's check DataContext or API response type. 
-                // The API returns 'fromId' and 'toId'.
+      <div className="space-y-1 px-1">
+      {/* Group Balance Summary */}
+      <div className="space-y-1 px-1">
+        {(() => {
+            // 1. Calculate all balances first
+            const memberBalances = group.members.map(member => {
+                const memberId = member.id;
+                const isMe = memberId === currentUser.id || member.userId === currentUser.id;
                 
-                if (t.fromId === currentUser.id && t.toId === memberId) {
-                    // I paid them (settle up) -> reduces what I owe (or increases what they owe)
-                    // Basically I gave money. balance increases (positive = they owe me / I am up)
-                    balance += t.amount;
-                } else if (t.fromId === memberId && t.toId === currentUser.id) {
-                    // They paid me. balance decreases.
-                    balance -= t.amount;
-                }
-            });
+                if (isMe) return null;
 
-            if (Math.abs(balance) < 0.01) return null;
+                let balance = 0;
+                
+                // Helper to check if a generic ID matches this specific Member
+                // We assume 'id' could be:
+                // 1. The member.id itself (Group Creator's Friend ID)
+                // 2. A Friend ID from MY list that links to the same Global User as this member
+                // 3. The Global User ID itself
+                const isThisMember = (targetId: string) => {
+                    // Direct Match
+                    if (targetId === memberId) return true;
+                    if (member.userId && targetId === member.userId) return true;
 
-            const isOwe = balance < 0;
-            const amount = Math.abs(balance).toFixed(2);
+                    // Linked Friend Match (Context: I added expense using My Friend List)
+                    const myFriend = friends.find(f => f.id === targetId);
+                    if (myFriend && myFriend.linked_user_id && myFriend.linked_user_id === member.userId) {
+                        return true;
+                    }
+                    return false;
+                };
 
-            return (
-                <Card key={memberId} className="p-3 bg-muted/30 border-dashed">
-                    <div className="flex items-center justify-between">
-                         <div className="flex items-center gap-2">
-                            <Avatar className="h-6 w-6">
-                               <AvatarImage src={friend.avatar} />
-                               <AvatarFallback>{friend.name[0]}</AvatarFallback>
-                            </Avatar>
-                            <span className="text-sm font-medium">{friend.name}</span>
-                         </div>
-                         <span className={cn("text-sm font-bold", isOwe ? "text-red-500" : "text-green-500")}>
-                            {isOwe ? "you owe" : "owes you"} ₹{amount}
-                         </span>
+                // Expense Debts
+                groupExpenses.forEach(expense => {
+                    if (expense.payerId === currentUser.id) {
+                        // I paid, they owe me their split
+                        const split = expense.splits.find(s => isThisMember(s.userId));
+                        if (split) balance += (split.amount || 0);
+                    } else if (isThisMember(expense.payerId)) {
+                        // They paid, I owe them my split
+                        const split = expense.splits.find(s => s.userId === currentUser.id);
+                        if (split) balance -= (split.amount || 0);
+                    }
+                });
+
+                // Settle Up Transactions
+                const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+                groupTransactions.forEach((t: any) => {
+                    if (t.fromId === currentUser.id && isThisMember(t.toId)) {
+                        balance += t.amount;
+                    } else if (isThisMember(t.fromId) && t.toId === currentUser.id) {
+                        balance -= t.amount;
+                    }
+                });
+
+                return {
+                    member,
+                    balance,
+                    isSettled: Math.abs(balance) < 0.01
+                };
+            }).filter((m): m is NonNullable<typeof m> => m !== null);
+
+            // 2. Filter out settled members
+            const activeBalances = memberBalances.filter(m => !m.isSettled);
+
+            // 3. Render
+            if (activeBalances.length === 0) {
+                return (
+                    <div className="flex items-center justify-center  bg-muted/20 rounded-lg">
+                        <span className="text-muted-foreground font-medium flex items-center gap-2">
+                             All settled up! 🎉
+                        </span>
                     </div>
-                </Card>
-            )
-        })}
+                );
+            }
+
+            return activeBalances.map(({ member, balance }) => {
+                const isOwe = balance < 0;
+                const amount = Math.abs(balance).toFixed(2);
+                
+                return (
+                    <div key={member.id} className="flex items-center justify-between py-1">
+                        <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                                <AvatarImage src={member.avatar} />
+                                <AvatarFallback>{member.name[0]}</AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm font-medium">{member.name}</span>
+                        </div>
+                        <span className={cn("text-sm font-bold", 
+                            isOwe ? "text-red-500" : "text-green-500"
+                        )}>
+                            {isOwe ? "you owe" : "owes you"} ₹{amount}
+                        </span>
+                    </div>
+                );
+            });
+        })()}
+      </div>
       </div>
 
       <div className="flex border-b">
@@ -282,24 +326,26 @@ import { api } from "../utils/api"
                 </Button>
               </div>
               <div className="space-y-3">
-                {group.members.map((memberId) => (
-                  <Card key={memberId} className="p-4">
-                    <div className="flex items-center gap-4">
-                      <Avatar>
-                        <AvatarImage src={friends.find(f => f.id === memberId)?.avatar} />
-                        <AvatarFallback>
-                          {getMemberName(memberId)
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1">
-                        <p className="font-medium">{getMemberName(memberId)}</p>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
+            {group.members.map(member => (
+              <Card key={member.id} className="p-4">
+                <div className="flex items-center gap-4">
+                  <Avatar>
+                    <AvatarImage src={member.avatar} />
+                    <AvatarFallback>
+                      {member.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <p className="font-medium">
+                        {(member.userId === currentUser.id) ? 'You' : member.name}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            ))}
               </div>
             </>
           )}
@@ -409,33 +455,51 @@ import { api } from "../utils/api"
             
             <div className="p-4 overflow-y-auto space-y-3">
                 <p className="text-sm text-muted-foreground mb-2">Select a friend to settle up with in this group.</p>
-                {group.members.map(memberId => {
-                    if (memberId === currentUser.id) return null;
-                    const friend = friends.find(f => f.id === memberId || f.linked_user_id === memberId);
-                    if (!friend) return null;
+                {group.members.map(member => {
+                    const memberId = member.id;
+                    const isMe = memberId === currentUser.id || member.userId === currentUser.id;
+                    if (isMe) return null;
+                    
+                    const name = member.name;
+                    const avatar = member.avatar;
 
                     // Calculate Balance specific to this Group (Duplicate logic to ensure isolation)
                     let balance = 0;
+                    
+                    const isMember = (id: string) => id === memberId || (member.userId && id === member.userId);
+                    const isCurrentUser = (id: string) => id === currentUser.id; // Helper for consistency
+
                     groupExpenses.forEach(expense => {
-                        if (expense.payerId === currentUser.id) {
-                            const split = expense.splits.find(s => s.userId === memberId);
-                            if (split) balance += (split.amount || 0);
-                        } else if (expense.payerId === memberId) {
-                            const split = expense.splits.find(s => s.userId === currentUser.id);
-                            if (split) balance -= (split.amount || 0);
+                        if (isCurrentUser(expense.payerId)) {
+                            // I paid, checking if they owe me
+                            const split = expense.splits.find(s => isMember(s.userId));
+                            if (split) {
+                                const amt = (split.amount || 0);
+                                balance += amt;
+                            }
+                        } else if (isMember(expense.payerId)) {
+                            // They paid, checking if I owe them
+                            const split = expense.splits.find(s => isCurrentUser(s.userId));
+                            if (split) {
+                                const amt = (split.amount || 0);
+                                balance -= amt;
+                            }
                         }
                     });
 
                     const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
                     groupTransactions.forEach((t: any) => {
-                        if (t.fromId === currentUser.id && t.toId === memberId) {
+                        if (isCurrentUser(t.fromId) && isMember(t.toId)) {
+                            // I paid them (Settle Up)
                             balance += t.amount;
-                        } else if (t.fromId === memberId && t.toId === currentUser.id) {
+                        } else if (isMember(t.fromId) && isCurrentUser(t.toId)) {
+                            // They paid me (Settle Up)
                             balance -= t.amount;
                         }
                     });
 
-                    if (Math.abs(balance) < 0.01) return null;
+                    // We now show ALL members, even if balance is 0, so users can settle/pay anyone.
+                    // if (Math.abs(balance) < 0.01) return null;
 
                     const isOwe = balance < 0;
                     const amount = Math.abs(balance).toFixed(2);
@@ -444,11 +508,11 @@ import { api } from "../utils/api"
                         <Card key={memberId} className="p-4 flex items-center justify-between">
                             <div className="flex items-center gap-3">
                                 <Avatar>
-                                    <AvatarImage src={friend.avatar} />
-                                    <AvatarFallback>{friend.name[0]}</AvatarFallback>
+                                    <AvatarImage src={avatar} />
+                                    <AvatarFallback>{name[0]}</AvatarFallback>
                                 </Avatar>
                                 <div>
-                                    <p className="font-medium">{friend.name}</p>
+                                    <p className="font-medium">{name}</p>
                                     <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
                                         {isOwe ? "you owe" : "owes you"} ₹{amount}
                                     </p>
@@ -457,9 +521,10 @@ import { api } from "../utils/api"
                             <Button size="sm" onClick={() => {
                                 navigate("/settle-up", { 
                                     state: { 
-                                        friendId: friend.id,
+                                        friendId: memberId,
                                         groupId: group.id,
-                                        defaultDirection: isOwe ? "paying" : "receiving"
+                                        defaultDirection: isOwe ? "paying" : "receiving",
+                                        amount: Math.abs(balance).toFixed(2)
                                     } 
                                 });
                             }}>
