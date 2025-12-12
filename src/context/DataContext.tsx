@@ -22,7 +22,7 @@ type DataContextType = {
   addExpense: (expense: Omit<Expense, "id" | "date">) => Promise<void>
   addFriend: (name: string, email?: string) => Promise<void>
   addGroup: (name: string, type: Group["type"], members: string[]) => Promise<void>
-  settleUp: (friendId: string, amount: number, type: "paid" | "received") => Promise<void>
+  settleUp: (friendId: string, amount: number, type: "paid" | "received", groupId?: string) => Promise<void>
   deleteExpense: (id: string) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
   restoreExpense: (id: string) => Promise<void>
@@ -97,7 +97,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   })
 
   const settleUpMutation = useMutation({
-    mutationFn: (data: { friendId: string, amount: number, type: "paid" | "received" }) => api.post('/api/transactions/settle-up', data),
+    mutationFn: (data: { friendId: string, amount: number, type: "paid" | "received", groupId?: string }) => api.post('/api/transactions/settle-up', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] })
@@ -164,8 +164,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       await addGroupMutation.mutateAsync({ name, type, members })
   }, [addGroupMutation])
 
-  const settleUp = React.useCallback(async (friendId: string, amount: number, type: "paid" | "received") => {
-      await settleUpMutation.mutateAsync({ friendId, amount, type })
+  const settleUp = React.useCallback(async (friendId: string, amount: number, type: "paid" | "received", groupId?: string) => {
+      await settleUpMutation.mutateAsync({ friendId, amount, type, groupId })
   }, [settleUpMutation])
 
   const deleteTransaction = React.useCallback(async (id: string) => {

@@ -64,7 +64,7 @@ export function Groups() {
           </p>
         ) : (
           groups.map((group) => (
-            <Link key={group.id} to={`/groups/${group.id}`}>
+            <Link key={group.id} to={`/groups/${group.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
                 <div className="flex items-center gap-4">
                   <div className="h-12 w-12 bg-secondary rounded-lg flex items-center justify-center text-secondary-foreground">

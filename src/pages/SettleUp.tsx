@@ -9,15 +9,19 @@ import { cn } from "../utils/cn"
 
 export function SettleUp() {
   const navigate = useNavigate()
-  const { friends, settleUp } = useData()
+  const { friends, settleUp, groups } = useData()
   
   const location = useLocation()
   const [friendId, setFriendId] = useState(location.state?.friendId || "")
+  const groupId = location.state?.groupId || ""
   const [amount, setAmount] = useState("")
   const [direction, setDirection] = useState<"paying" | "receiving">(
     (location.state?.defaultDirection as "paying" | "receiving") || "paying"
   )
   const [loading, setLoading] = useState(false)
+
+  // Filter groups where both I and the selected friend are members
+  const selectedGroup = groups.find(g => g.id === groupId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,9 +32,10 @@ export function SettleUp() {
         await settleUp(
           friendId,
           parseFloat(amount),
-          direction === "paying" ? "paid" : "received"
+          direction === "paying" ? "paid" : "received",
+          groupId || undefined
         )
-        navigate("/")
+        navigate(-1) // Go back to where we came from (Group or Friend detail)
     } catch (error) {
         console.error("Error settling up:", error)
     } finally {
@@ -47,15 +52,24 @@ export function SettleUp() {
         <h1 className="text-xl font-bold">Settle Up</h1>
       </div>
 
+      <div className="bg-muted/30 p-4 rounded-lg border text-center">
+          <p className="text-sm text-muted-foreground mb-1">Recording payment for</p>
+          <p className="font-semibold text-primary">
+              {selectedGroup ? `Group: "${selectedGroup.name}"` : "Non-group expenses (General)"}
+          </p>
+      </div>
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="space-y-2">
           <Label>Who are you settling with?</Label>
           <select
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             value={friendId}
-            onChange={(e) => setFriendId(e.target.value)}
+            onChange={(e) => {
+                setFriendId(e.target.value);
+            }}
             required
-            disabled={loading}
+            disabled={loading || !!location.state?.friendId} // Lock friend if pre-selected (Group flow usually pre-selects)
           >
             <option value="">Select a friend</option>
             {friends.map(friend => (

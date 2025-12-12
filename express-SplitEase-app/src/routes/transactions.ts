@@ -121,7 +121,7 @@ const notifyTransactionParticipants = async (
 };
 
 router.post('/settle-up', async (req, res) => {
-  const { friendId, amount, type } = req.body;
+  const { friendId, amount, type, groupId } = req.body;
   const supabase = createSupabaseClient();
 
   const { data, error } = await supabase
@@ -130,6 +130,7 @@ router.post('/settle-up', async (req, res) => {
       friend_id: friendId,
       amount,
       type, // 'paid' or 'received'
+      group_id: groupId || null,
       deleted: false,
       date: new Date().toISOString()
     }])

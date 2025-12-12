@@ -9,7 +9,7 @@ import { cn } from "../utils/cn"
 export function FriendDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { friends, expenses, currentUser } = useData()
+  const { friends, expenses, currentUser, groups, transactions } = useData()
   const friend = friends.find((f) => f.id === id)
 
   if (!friend) {
@@ -45,25 +45,109 @@ export function FriendDetail() {
         </div>
       </div>
 
-      <Card className="p-6 text-center">
-        <p className="text-sm text-muted-foreground mb-1">Total Balance</p>
-        <div
-          className={cn(
-            "text-3xl font-bold mb-4",
-            friend.balance > 0
-              ? "text-green-600"
-              : friend.balance < 0
-              ? "text-red-600"
-              : "text-muted-foreground"
-          )}
-        >
-          {friend.balance === 0
-            ? "Settled"
-            : friend.balance > 0
-            ? `Owes you ₹${friend.balance}`
-            : `You owe ₹${Math.abs(friend.balance)}`}
+      <Card className="p-6 text-center space-y-4">
+        <div>
+            <p className="text-sm text-muted-foreground mb-1">Total Balance</p>
+            <div
+            className={cn(
+                "text-3xl font-bold",
+                friend.balance > 0
+                ? "text-green-600"
+                : friend.balance < 0
+                ? "text-red-600"
+                : "text-muted-foreground"
+            )}
+            >
+            {friend.balance === 0
+                ? "Settled"
+                : friend.balance > 0
+                ? `Owes you ₹${friend.balance}`
+                : `You owe ₹${Math.abs(friend.balance)}`}
+            </div>
         </div>
-        <div className="flex justify-center gap-4">
+
+        {/* Breakdown */}
+        <div className="text-left space-y-2 border-t pt-4">
+            {(() => {
+                const breakdown = [];
+                
+                // 1. Mutual Groups
+                const mutualGroups = groups.filter(g => g.members.includes(currentUser.id) && g.members.includes(friend.id));
+                
+                mutualGroups.forEach(group => {
+                    // Filter Expenses
+                    const gExpenses = expenses.filter(e => e.groupId === group.id);
+                    // Filter Transactions
+                    const gTrans = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+                    
+                    let bal = 0;
+                    // Expense Logic
+                    gExpenses.forEach(e => {
+                         if (e.payerId === currentUser.id) {
+                             const s = e.splits.find(s => s.userId === friend.id);
+                             if (s) bal += (s.amount || 0);
+                         } else if (e.payerId === friend.id || (friend.linked_user_id && e.payerId === friend.linked_user_id)) {
+                             const s = e.splits.find(s => s.userId === currentUser.id);
+                             if (s) bal -= (s.amount || 0);
+                         }
+                    });
+                    // Transaction Logic
+                    gTrans.forEach((t: any) => {
+                        if (t.fromId === currentUser.id && (t.toId === friend.id || (friend.linked_user_id && t.toId === friend.linked_user_id))) {
+                             bal += t.amount;
+                        } else if ((t.fromId === friend.id || (friend.linked_user_id && t.fromId === friend.linked_user_id)) && t.toId === currentUser.id) {
+                             bal -= t.amount;
+                        }
+                    });
+
+                    if (Math.abs(bal) > 0.01) {
+                        breakdown.push({ name: group.name, amount: bal, isGroup: true });
+                    }
+                });
+
+                // 2. Non-Group
+                const ngExpenses = expenses.filter(e => !e.groupId && 
+                     e.splits.some(s => s.userId === friend.id || (friend.linked_user_id && s.userId === friend.linked_user_id))
+                );
+                const ngTrans = transactions.filter((t: any) => !t.groupId && !t.deleted &&
+                     ((t.fromId === currentUser.id && (t.toId === friend.id || t.toId === friend.linked_user_id)) ||
+                      ((t.fromId === friend.id || t.fromId === friend.linked_user_id) && t.toId === currentUser.id))
+                );
+
+                let ngBal = 0;
+                 ngExpenses.forEach(e => {
+                         if (e.payerId === currentUser.id) {
+                             const s = e.splits.find(s => s.userId === friend.id);
+                             if (s) ngBal += (s.amount || 0);
+                         } else if (e.payerId === friend.id || (friend.linked_user_id && e.payerId === friend.linked_user_id)) {
+                             const s = e.splits.find(s => s.userId === currentUser.id);
+                             if (s) ngBal -= (s.amount || 0);
+                         }
+                    });
+                 ngTrans.forEach((t: any) => {
+                        if (t.fromId === currentUser.id) {
+                             ngBal += t.amount;
+                        } else {
+                             ngBal -= t.amount;
+                        }
+                    });
+                
+                if (Math.abs(ngBal) > 0.01) {
+                    breakdown.push({ name: "Non-group expenses", amount: ngBal, isGroup: false });
+                }
+
+                return breakdown.map((item, idx) => (
+                    <div key={idx} className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">{item.isGroup ? `In "${item.name}"` : item.name}</span>
+                        <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
+                            {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
+                        </span>
+                    </div>
+                ));
+            })()}
+        </div>
+
+        <div className="flex justify-center gap-4 pt-2">
           <Button 
             className="w-full max-w-xs"
             onClick={() => navigate("/settle-up", { 

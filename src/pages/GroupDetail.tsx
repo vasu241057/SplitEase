@@ -9,13 +9,14 @@ import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 
-export function GroupDetail() {
+  export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser, loading } = useData() 
+  const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser, loading, transactions } = useData() 
   
   const [activeTab, setActiveTab] = useState<"expenses" | "members">("expenses")
   const [showAddMember, setShowAddMember] = useState(false)
+  const [showSettleUpModal, setShowSettleUpModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -96,6 +97,7 @@ export function GroupDetail() {
             {group.type}
           </p>
         </div>
+
         <Button
           variant="ghost"
           size="sm"
@@ -104,6 +106,78 @@ export function GroupDetail() {
         >
           Delete
         </Button>
+      </div>
+
+      {/* Group Balance Summary */}
+      <div className="space-y-4">
+        {group.members.map(memberId => {
+            if (memberId === currentUser.id) return null;
+            const friend = friends.find(f => f.id === memberId || f.linked_user_id === memberId);
+            if (!friend) return null;
+
+            // Calculate Balance specific to this Group
+            let balance = 0;
+
+            // 1. Expense Debts
+            groupExpenses.forEach(expense => {
+                if (expense.payerId === currentUser.id) {
+                    // I paid, they owe me their split
+                    const split = expense.splits.find(s => s.userId === memberId);
+                    if (split) balance += (split.amount || 0);
+                } else if (expense.payerId === memberId) {
+                    // They paid, I owe them my split
+                    const split = expense.splits.find(s => s.userId === currentUser.id);
+                    if (split) balance -= (split.amount || 0);
+                }
+                // If 3rd party paid, no impact on my relationship with this member directly in 2-way?
+                // Actually in Splitwise, debt is strictly bilateral.
+                // If C paid, I owe C. Member B owes C. Me and B have no debt change.
+                // So yes, strictly Payer vs User.
+            });
+
+            // 2. Settle Up (Transactions linked to this group)
+            // We need access to all transactions. We extracted 'transactions' from useData below.
+            // Wait, we need to add 'transactions' to destructuring in start of component.
+            const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+            
+            groupTransactions.forEach((t: any) => {
+                // We need to know who paid whom.
+                // In transactions list: fromId and toId are pre-calculated by backend/hook? 
+                // Let's check DataContext or API response type. 
+                // The API returns 'fromId' and 'toId'.
+                
+                if (t.fromId === currentUser.id && t.toId === memberId) {
+                    // I paid them (settle up) -> reduces what I owe (or increases what they owe)
+                    // Basically I gave money. balance increases (positive = they owe me / I am up)
+                    balance += t.amount;
+                } else if (t.fromId === memberId && t.toId === currentUser.id) {
+                    // They paid me. balance decreases.
+                    balance -= t.amount;
+                }
+            });
+
+            if (Math.abs(balance) < 0.01) return null;
+
+            const isOwe = balance < 0;
+            const amount = Math.abs(balance).toFixed(2);
+
+            return (
+                <Card key={memberId} className="p-3 bg-muted/30 border-dashed">
+                    <div className="flex items-center justify-between">
+                         <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                               <AvatarImage src={friend.avatar} />
+                               <AvatarFallback>{friend.name[0]}</AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm font-medium">{friend.name}</span>
+                         </div>
+                         <span className={cn("text-sm font-bold", isOwe ? "text-red-500" : "text-green-500")}>
+                            {isOwe ? "you owe" : "owes you"} ₹{amount}
+                         </span>
+                    </div>
+                </Card>
+            )
+        })}
       </div>
 
       <div className="flex border-b">
@@ -133,7 +207,10 @@ export function GroupDetail() {
 
       {activeTab === "expenses" ? (
         <div className="space-y-4">
-          <div className="flex justify-end">
+          <div className="flex justify-between">
+            <Button size="sm" variant="outline" onClick={() => setShowSettleUpModal(true)}>
+              Settle Up
+            </Button>
             <Button size="sm" className="gap-2" onClick={() => navigate("/add-expense", { state: { preSelectedGroup: group } })}>
               <Plus className="h-4 w-4" /> Add Expense
             </Button>
@@ -313,6 +390,85 @@ export function GroupDetail() {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Group Settle Up Modal */}
+      {showSettleUpModal && (
+        <div className="fixed inset-0 bg-background z-50 flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+                <h2 className="text-xl font-bold">Settle Up</h2>
+                <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowSettleUpModal(false)}
+                >
+                <X className="h-5 w-5" />
+                </Button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto space-y-3">
+                <p className="text-sm text-muted-foreground mb-2">Select a friend to settle up with in this group.</p>
+                {group.members.map(memberId => {
+                    if (memberId === currentUser.id) return null;
+                    const friend = friends.find(f => f.id === memberId || f.linked_user_id === memberId);
+                    if (!friend) return null;
+
+                    // Calculate Balance specific to this Group (Duplicate logic to ensure isolation)
+                    let balance = 0;
+                    groupExpenses.forEach(expense => {
+                        if (expense.payerId === currentUser.id) {
+                            const split = expense.splits.find(s => s.userId === memberId);
+                            if (split) balance += (split.amount || 0);
+                        } else if (expense.payerId === memberId) {
+                            const split = expense.splits.find(s => s.userId === currentUser.id);
+                            if (split) balance -= (split.amount || 0);
+                        }
+                    });
+
+                    const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+                    groupTransactions.forEach((t: any) => {
+                        if (t.fromId === currentUser.id && t.toId === memberId) {
+                            balance += t.amount;
+                        } else if (t.fromId === memberId && t.toId === currentUser.id) {
+                            balance -= t.amount;
+                        }
+                    });
+
+                    if (Math.abs(balance) < 0.01) return null;
+
+                    const isOwe = balance < 0;
+                    const amount = Math.abs(balance).toFixed(2);
+
+                    return (
+                        <Card key={memberId} className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <Avatar>
+                                    <AvatarImage src={friend.avatar} />
+                                    <AvatarFallback>{friend.name[0]}</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                    <p className="font-medium">{friend.name}</p>
+                                    <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
+                                        {isOwe ? "you owe" : "owes you"} ₹{amount}
+                                    </p>
+                                </div>
+                            </div>
+                            <Button size="sm" onClick={() => {
+                                navigate("/settle-up", { 
+                                    state: { 
+                                        friendId: friend.id,
+                                        groupId: group.id,
+                                        defaultDirection: isOwe ? "paying" : "receiving"
+                                    } 
+                                });
+                            }}>
+                                Settle
+                            </Button>
+                        </Card>
+                    )
+                })}
+            </div>
         </div>
       )}
     </div>
