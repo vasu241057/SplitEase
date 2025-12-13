@@ -8,7 +8,7 @@ import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
 
 export function Groups() {
-  const { groups, friends, loading } = useData()
+  const { groups, friends, loading, expenses } = useData()
   const navigate = useNavigate()
 
   // Calculate net balance for groups (mock logic as group balance isn't directly stored)
@@ -22,6 +22,11 @@ export function Groups() {
     .reduce((acc, curr) => acc + Math.abs(curr.balance), 0)
 
   const netBalance = totalOwed - totalOwe
+
+  // Count expenses per group
+  const getGroupExpenseCount = (groupId: string) => {
+    return expenses.filter(e => e.groupId === groupId && !e.deleted).length
+  }
 
   return (
     <div className="space-y-6">
@@ -63,7 +68,9 @@ export function Groups() {
             You haven't joined any groups yet.
           </p>
         ) : (
-          groups.map((group) => (
+          groups.map((group) => {
+            const expenseCount = getGroupExpenseCount(group.id)
+            return (
             <Link key={group.id} to={`/groups/${group.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
                 <div className="flex items-center gap-4">
@@ -77,12 +84,12 @@ export function Groups() {
                     </p>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    No expenses
+                    {expenseCount === 0 ? "No expenses" : `${expenseCount} expense${expenseCount > 1 ? 's' : ''}`}
                   </div>
                 </div>
               </Card>
             </Link>
-          ))
+          )})
         )}
       </div>
       <FloatingAddExpense />
