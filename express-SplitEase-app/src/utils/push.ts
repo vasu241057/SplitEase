@@ -16,54 +16,76 @@ export async function sendPushNotification(
   body: string,
   url: string = '/'
 ) {
-  try {
-    webpush.setVapidDetails(
-      env.VAPID_SUBJECT,
-      env.VAPID_PUBLIC_KEY,
-      env.VAPID_PRIVATE_KEY
-    );
+  console.log(`[Push] Sending notification to ${userIds.length} users. Title: "${title}", URL: "${url}"`);
 
-    const supabase = createSupabaseClient();
-
-    // Get subscriptions for users
-    const { data: subscriptions, error } = await supabase
-      .from('push_subscriptions')
-      .select('*')
-      .in('user_id', userIds);
-
-    if (error || !subscriptions || subscriptions.length === 0) {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+      console.error('[Push] Missing VAPID keys provided to sendPushNotification');
       return;
+  }
+  
+  // Set VAPID
+  try {
+      webpush.setVapidDetails(
+        env.VAPID_SUBJECT || 'mailto:admin@example.com',
+        env.VAPID_PUBLIC_KEY,
+        env.VAPID_PRIVATE_KEY
+      );
+  } catch(e) {
+      console.error('[Push] Failed to set VAPID details', e);
+      return;
+  }
+
+  const supabase = createSupabaseClient(); 
+
+  // For each user, get subscriptions
+  for (const userId of userIds) {
+    const { data: subs, error } = await supabase
+      .from('push_subscriptions')
+      .select('endpoint, p256dh, auth, id') // Select columns directly
+      .eq('user_id', userId);
+
+    if (error) {
+        console.error(`[Push] Error fetching subs for ${userId}:`, error);
+        continue;
     }
+    
+    if (!subs || subs.length === 0) {
+        console.log(`[Push] No subscriptions found for user ${userId}`);
+        continue;
+    }
+
+    console.log(`[Push] Found ${subs.length} subscriptions for user ${userId}`);
 
     const payload = JSON.stringify({
       title,
       body,
-      url,
-      icon: '/logo.jpg'
+      url, 
+      icon: '/icon-192x192.png'
     });
 
-    // Send to all subscriptions
-    const promises = subscriptions.map(async (sub) => {
-      const pushSubscription = {
-        endpoint: sub.endpoint,
-        keys: {
-          p256dh: sub.p256dh,
-          auth: sub.auth
-        }
+    for (const subRecord of subs) {
+      // Construct subscription object for web-push
+      const sub = {
+          endpoint: subRecord.endpoint,
+          keys: {
+              p256dh: subRecord.p256dh,
+              auth: subRecord.auth
+          }
       };
 
       try {
-        await webpush.sendNotification(pushSubscription, payload);
+        await webpush.sendNotification(sub, payload);
+        console.log(`[Push] Notification sent to user ${userId} (sub ${subRecord.id})`);
       } catch (err: any) {
-        if (err.statusCode === 410 || err.statusCode === 404) {
-          // Subscription expired or invalid, delete it
-          await supabase.from('push_subscriptions').delete().eq('id', sub.id);
+        console.error(`[Push] Failed to send to ${userId} (sub ${subRecord.id}):`, err?.statusCode, err?.body || err);
+        if (err?.statusCode === 410 || err?.statusCode === 404) {
+           console.log(`[Push] Deleting invalid subscription ${subRecord.id}`);
+           await supabase
+             .from('push_subscriptions')
+             .delete()
+             .eq('id', subRecord.id); 
         }
       }
-    });
-
-    await Promise.all(promises);
-  } catch (error) {
-    console.error('Failed to send push notifications:', error);
+    }
   }
 }

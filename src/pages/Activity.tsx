@@ -1,4 +1,4 @@
-import { Banknote, ArrowRightLeft } from "lucide-react"
+import { Banknote, ArrowRightLeft, Users, User } from "lucide-react"
 import { cn } from "../utils/cn"
 import { useData } from "../context/DataContext"
 import { Card } from "../components/ui/card"
@@ -7,7 +7,7 @@ import { Link } from "react-router-dom"
 import { Skeleton } from "../components/ui/skeleton"
 
 export function Activity() {
-  const { allExpenses, transactions, currentUser, loading } = useData()
+  const { allExpenses, transactions, currentUser, loading, groups } = useData()
 
   // Combine and sort activities
   type ActivityItem = (
@@ -58,11 +58,20 @@ export function Activity() {
             </p>
           ) : (
             activities.map((activity) => {
+              const group = groups.find(g => g.id === activity.groupId)
+              const ContextIcon = group ? Users : User
+              const contextLabel = group ? group.name : "Personal"
+              const isGroup = !!group
+
               const content = (
                 <div className="flex items-center p-4 gap-4">
                   <div className={cn(
-                    "h-10 w-10 rounded-full flex items-center justify-center",
-                    activity.deleted ? "bg-red-100 text-red-500" : "bg-primary/10 text-primary"
+                    "h-10 w-10 rounded-full flex items-center justify-center transition-colors",
+                    activity.deleted 
+                      ? "bg-red-100 text-red-500" 
+                      : isGroup 
+                        ? "bg-indigo-50 text-indigo-600" 
+                        : "bg-primary/10 text-primary"
                   )}>
                     {activity.deleted ? (
                        <Banknote className="h-5 w-5" />
@@ -76,10 +85,14 @@ export function Activity() {
                     <p className={cn("font-medium truncate", activity.deleted && "line-through text-muted-foreground")}>
                       {activity.description || (activity.type === 'expense' ? 'Expense' : 'Payment')}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {activity.deleted ? "Deleted on " : ""}
-                      {new Date(activity.date).toLocaleDateString()} • {new Date(activity.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1 bg-muted/50 px-1.5 py-0.5 rounded-sm">
+                        <ContextIcon className="h-3 w-3" />
+                        <span className="font-medium truncate max-w-[100px]">{contextLabel}</span>
+                      </div>
+                      <span>•</span>
+                      <span>{new Date(activity.date).toLocaleDateString()}</span>
+                    </div>
                   </div>
                   <div className="text-right">
                     <p className={cn("font-bold", activity.deleted && "line-through text-muted-foreground")}>₹{activity.amount}</p>

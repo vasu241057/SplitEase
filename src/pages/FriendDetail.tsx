@@ -230,7 +230,7 @@ export function FriendDetail() {
                         <Card 
                             key={`group-${item.id}`}
                             className="p-4 flex items-center justify-between cursor-pointer hover:bg-muted/50 transition-colors border-l-4 border-l-secondary"
-                            onClick={() => navigate(`/groups/${item.id}`)}
+                            onClick={() => navigate(`/groups/${item.id}`, { state: { fromFriendId: friend.id } })}
                         >
                             <div className="flex items-center gap-3">
                                 <div className="h-10 w-10 bg-secondary rounded-lg flex items-center justify-center text-secondary-foreground">

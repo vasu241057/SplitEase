@@ -1,24 +1,31 @@
 self.addEventListener('push', function(event) {
+  console.log('[SW] Push Received', event);
+  
   if (event.data) {
+    console.log('[SW] Push Data:', event.data.text());
     const data = event.data.json();
-    console.log('[SW] Push Data:', data);
+    
     const options = {
       body: data.body,
-      icon: data.icon || '/logo.jpg',
-      badge: '/logo.jpg',
-      requireInteraction: true, // Force notification to stay on screen
+      icon: data.icon || '/icon-192x192.png',
+      badge: '/icon-192x192.png',
       data: {
         url: data.url
       }
     };
 
+    console.log('[SW] Showing Notification:', data.title, options);
+    
     event.waitUntil(
       self.registration.showNotification(data.title, options)
     );
+  } else {
+    console.log('[SW] Push event has no data');
   }
 });
 
 self.addEventListener('notificationclick', function(event) {
+  console.log('[SW] Notification Clicked:', event.notification.data);
   event.notification.close();
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {

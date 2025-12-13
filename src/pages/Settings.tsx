@@ -99,8 +99,13 @@ export function Settings() {
     }
   }
 
+  const [scanStatus, setScanStatus] = useState<"idle" | "processing" | "success" | "error">("idle");
+  const [scanMessage, setScanMessage] = useState("");
+
   const handleScanSuccess = async (decodedText: string) => {
       setShowScanner(false);
+      setScanStatus("processing");
+      
       try {
           // Extract Invite Code from URL or Raw Text
           let inviteCode = decodedText;
@@ -111,12 +116,19 @@ export function Settings() {
           
           const res = await api.post('/api/friends/accept-invite', { inviteCode });
           if (res) {
-              alert(`Successfully added friend: ${res.friend.name || 'Unknown'}`);
+              setScanStatus("success");
+              setScanMessage(`Successfully added friend: ${res.friend.name || 'Unknown'}`);
           }
       } catch (error: any) {
           console.error("Failed to accept invite", error);
-          alert("Failed to accept invite: " + (error.response?.data?.error || error.message));
+          setScanStatus("error");
+          setScanMessage("Failed to accept invite: " + (error.response?.data?.error || error.message));
       }
+  }
+
+  const closeScanResult = () => {
+    setScanStatus("idle");
+    setScanMessage("");
   }
 
   return (
@@ -245,6 +257,44 @@ export function Settings() {
            onScanSuccess={handleScanSuccess} 
            onClose={() => setShowScanner(false)} 
         />
+      )}
+
+      {/* Result Modal */}
+      {scanStatus !== 'idle' && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+            <Card className="max-w-xs w-full p-6 flex flex-col items-center gap-4 text-center animate-in fade-in zoom-in-95 duration-200">
+                {scanStatus === 'processing' && (
+                    <>
+                        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                        <p className="font-medium">Processing Invite...</p>
+                    </>
+                )}
+                {scanStatus === 'success' && (
+                    <>
+                        <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+                            <Check className="h-6 w-6 text-green-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Success!</h3>
+                            <p className="text-sm text-muted-foreground">{scanMessage}</p>
+                        </div>
+                        <Button className="w-full" onClick={closeScanResult}>Done</Button>
+                    </>
+                )}
+                {scanStatus === 'error' && (
+                    <>
+                         <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                            <X className="h-6 w-6 text-red-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Error</h3>
+                            <p className="text-sm text-muted-foreground">{scanMessage}</p>
+                        </div>
+                        <Button variant="outline" className="w-full" onClick={closeScanResult}>Close</Button>
+                    </>
+                )}
+            </Card>
+        </div>
       )}
     </div>
   )

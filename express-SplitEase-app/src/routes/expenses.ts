@@ -149,6 +149,10 @@ const notifyExpenseParticipants = async (
     // Fix: Deep link must match Frontend Route /expenses/:id
     const url = `/expenses/${expenseId}`;
 
+    console.log(`[Expenses] Notifying participants. Sender: ${senderName}, Action: ${action}`);
+    console.log(`[Expenses] Recipients: ${JSON.stringify(recipientIds)}`);
+    console.log(`[Expenses] Payload: Title="${title}", Body="${body}", URL="${url}"`);
+
     const { sendPushNotification } = await import('../utils/push');
     await sendPushNotification(env, recipientIds, title, body || 'New Activity', url);
 

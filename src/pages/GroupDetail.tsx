@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react"
-import { useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useLocation } from "react-router-dom"
 import { ArrowLeft, Banknote, Plus, UserPlus, X, Search } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -12,6 +12,7 @@ import { api } from "../utils/api"
   export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { groups, expenses, friends, refreshGroups, refreshExpenses, currentUser, loading, transactions } = useData() 
   
   const [activeTab, setActiveTab] = useState<"expenses" | "members">("expenses")
@@ -19,6 +20,15 @@ import { api } from "../utils/api"
   const [showSettleUpModal, setShowSettleUpModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const handleBack = () => {
+    const fromFriendId = location.state?.fromFriendId
+    if (fromFriendId) {
+      navigate(`/friends/${fromFriendId}`)
+    } else {
+      navigate("/groups")
+    }
+  }
 
   // Refresh expenses when component mounts or when returning from AddExpense
   useEffect(() => {
@@ -101,10 +111,8 @@ import { api } from "../utils/api"
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link to="/groups">
+        <Button variant="ghost" size="icon" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
-          </Link>
         </Button>
         <div className="flex-1">
           <h1 className="text-xl font-bold">{group.name}</h1>
