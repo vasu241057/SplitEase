@@ -597,7 +597,7 @@ export function AddExpense() {
       animate={{ clipPath: "circle(150% at 100% 100%)" }}
       exit={{ clipPath: "circle(0% at 100% 100%)" }}
       transition={{ duration: 0.5, ease: "easeInOut" }}
-      className="fixed inset-0 z-50 bg-background overflow-y-auto"
+      className="fixed inset-0 z-[60] bg-background overflow-y-auto"
     >
       <div className="container mx-auto px-4 py-4 min-h-screen flex flex-col">
         {/* Header */}
