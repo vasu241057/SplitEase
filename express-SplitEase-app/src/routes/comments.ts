@@ -116,20 +116,29 @@ router.post('/:entityType/:entityId', async (req, res) => {
         try {
             let recipientIds: string[] = [];
             const title = `New comment from ${profile?.full_name || 'Someone'}`;
-            const body = content;
-            const url = `/${entityType === 'expense' ? 'expense' : 'settle'}/${entityId}`;
+            let expenseTitle = '';
+
+            // Construct specific URL based on entity type
+            // Append ?action=chat to deep link directly to chat
+            let url = '/';
 
             if (entityType === 'expense') {
+                url = `/expenses/${entityId}?action=chat`;
                 const { data: expense } = await supabase
                     .from('expenses')
                     .select('*, expense_splits(*)')
                     .eq('id', entityId)
                     .single();
                 
-                if (expense && expense.expense_splits) {
-                    recipientIds = expense.expense_splits.map((s: any) => s.user_id);
+                if (expense) {
+                    expenseTitle = expense.description;
+                    if (expense.expense_splits) {
+                        recipientIds = expense.expense_splits.map((s: any) => s.user_id);
+                    }
+                    if (expense.payer_user_id) recipientIds.push(expense.payer_user_id);
                 }
             } else if (entityType === 'payment') {
+                url = `/payments/${entityId}?action=chat`; 
                 const { data: transaction } = await supabase
                     .from('transactions')
                     .select('*')
@@ -141,6 +150,11 @@ router.post('/:entityType/:entityId', async (req, res) => {
                 }
             }
             
+            // Contextual Body
+            const body = expenseTitle 
+                ? `${profile?.full_name || 'Someone'} commented on '${expenseTitle}': '${content}'`
+                : `${profile?.full_name || 'Someone'} commented: '${content}'`;
+
             // Remove sender
             recipientIds = recipientIds.filter(id => id !== userId);
             recipientIds = [...new Set(recipientIds)]; // unique

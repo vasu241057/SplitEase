@@ -103,11 +103,21 @@ const notifyExpenseParticipants = async (
     
     const senderName = profile?.full_name || 'Someone';
     const title = `${senderName} ${action}`;
-    const body = overrideBody || expense.description || 'Expense details';
-    const url = `/expense/${expenseId}`;
+    
+    let body = overrideBody;
+    if (!body) {
+        if (action.includes('added')) {
+             body = `${senderName} added an expense of ₹${expense.amount} for '${expense.description}'`;
+        } else {
+             body = expense.description || 'Expense details';
+        }
+    }
+    
+    // Fix: Deep link must match Frontend Route /expenses/:id
+    const url = `/expenses/${expenseId}`;
 
     const { sendPushNotification } = await import('../utils/push');
-    await sendPushNotification(env, recipientIds, title, body, url);
+    await sendPushNotification(env, recipientIds, title, body || 'New Activity', url);
 
   } catch (error) {
     console.error('Failed to send expense notification:', error);

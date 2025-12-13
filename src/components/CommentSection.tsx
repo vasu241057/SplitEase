@@ -24,12 +24,18 @@ interface CommentSectionProps {
   entityType: 'expense' | 'payment'
   entityId: string
   className?: string
+  autoFocus?: boolean
 }
 
-export function CommentSection({ entityType, entityId, className }: CommentSectionProps) {
-  const [content, setContent] = useState("")
-  const queryClient = useQueryClient()
-  const scrollRef = useRef<HTMLDivElement>(null)
+export function CommentSection({ entityType, entityId, className, autoFocus }: CommentSectionProps) {
+   const [content, setContent] = useState("")
+   const queryClient = useQueryClient()
+   const scrollRef = useRef<HTMLDivElement>(null)
+   const inputRef = useRef<HTMLInputElement>(null)
+
+   useEffect(() => {
+     // Initial cleanup/setup if needed
+   }, [])
 
   const { data: comments = [], isLoading } = useQuery({
     queryKey: ['comments', entityType, entityId],
@@ -42,6 +48,17 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [comments])
+
+  // Handle Auto Focus
+  useEffect(() => {
+      if (autoFocus) {
+          // Check if we need to scroll the page to view this section
+          setTimeout(() => {
+               inputRef.current?.focus();
+               inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 600);
+      }
+  }, [autoFocus]);
 
   const addCommentMutation = useMutation({
     mutationFn: (text: string) => api.post(`/api/comments/${entityType}/${entityId}`, { content: text }),
@@ -141,6 +158,7 @@ export function CommentSection({ entityType, entityId, className }: CommentSecti
         <div className="p-3 border-t bg-background flex-none">
              <div className="flex gap-2 items-center bg-muted/30 p-1.5 rounded-full border focus-within:ring-2 ring-primary/20 transition-all">
                 <Input 
+                   ref={inputRef}
                    placeholder="Type a message..." 
                    value={content}
                    onChange={(e) => setContent(e.target.value)}

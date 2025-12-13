@@ -1,5 +1,4 @@
-
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { ArrowLeft, Trash2, RotateCcw, ArrowRightLeft, Calendar, User, Loader2 } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -12,6 +11,7 @@ import { CommentSection } from "../components/CommentSection"
 export function TransactionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { transactions, currentUser, deleteTransaction, restoreTransaction, friends, loading } = useData()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -175,7 +175,12 @@ export function TransactionDetail() {
         </div>
       </div>
 
-       <CommentSection entityType="payment" entityId={transaction.id} className="border-t flex-1" />
+        <CommentSection 
+            entityType="payment" 
+            entityId={transaction.id} 
+            className="border-t flex-1" 
+            autoFocus={searchParams.get("action") === "chat"}
+        />
 
        {/* Delete Confirmation Modal */}
        {showDeleteConfirm && (

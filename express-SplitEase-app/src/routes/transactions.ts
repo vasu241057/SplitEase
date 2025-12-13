@@ -110,8 +110,10 @@ const notifyTransactionParticipants = async (
     const senderName = profile?.full_name || 'Someone';
     // 'recorded a payment' or 'deleted a payment'
     const title = `${senderName} ${action}`;
-    const body = overrideBody || `Amount: ${transaction.amount}`;
-    const url = `/settle/${transactionId}`; // Assuming there is a verify page or just the list
+    const body = overrideBody || `${senderName} settled up ₹${transaction.amount} with you`;
+    
+    // Fix: Deep link must match Frontend Route /payments/:id
+    const url = `/payments/${transactionId}`;
 
     const { sendPushNotification } = await import('../utils/push');
     await sendPushNotification(env, recipientIds, title, body, url);
