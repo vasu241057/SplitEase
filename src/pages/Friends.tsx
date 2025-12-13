@@ -1,4 +1,5 @@
-import { Plus } from "lucide-react"
+import { useState } from "react"
+import { Plus, Bell, X } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -10,8 +11,22 @@ import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
 import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
 
+const NOTIF_BANNER_DISMISSED_KEY = "splitease_notif_banner_dismissed"
+
 export function Friends() {
   const { friends, loading, currentUser, groups, expenses, transactions } = useData()
+
+  
+  // Notification banner state - only show once
+  const [showNotifBanner, setShowNotifBanner] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return !localStorage.getItem(NOTIF_BANNER_DISMISSED_KEY)
+  })
+  
+  const dismissNotifBanner = () => {
+    setShowNotifBanner(false)
+    localStorage.setItem(NOTIF_BANNER_DISMISSED_KEY, "true")
+  }
   
   const totalOwed = friends
     .filter((f) => f.balance > 0)
@@ -22,7 +37,6 @@ export function Friends() {
     .reduce((acc, curr) => acc + Math.abs(curr.balance), 0)
 
   const netBalance = totalOwed - totalOwe
-
 
 
   return (
@@ -37,7 +51,31 @@ export function Friends() {
         </Link>
       </div>
 
-
+      {/* One-time notification onboarding banner */}
+      {showNotifBanner && (
+        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl p-4 relative">
+          <button 
+            onClick={dismissNotifBanner}
+            className="absolute top-2 right-2 text-blue-400 hover:text-blue-600"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <div className="flex items-start gap-3 pr-6">
+            <Bell className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                Enable notifications
+              </p>
+              <p className="text-xs text-blue-700 dark:text-blue-300">
+                Get notified when friends add expenses. Go to{" "}
+                <Link to="/settings" className="underline font-medium">Settings</Link>
+                {" "}to enable.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-primary text-primary-foreground p-6 rounded-2xl shadow-lg">

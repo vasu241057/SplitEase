@@ -67,11 +67,11 @@ export function InviteFriend() {
         <h1 className="text-xl font-bold">Add Friend</h1>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
+        <div className="flex-1 flex flex-col items-center pt-4 p-6 space-y-6">
         <div className="text-center space-y-2">
           <h2 className="text-2xl font-bold">Scan to Add</h2>
           <p className="text-muted-foreground">
-            Ask your friend to scan this code to add you instantly.
+            Show this QR code to your friend
           </p>
           {error && (
             <p className="text-red-500 text-sm bg-red-50 p-2 rounded">
@@ -87,6 +87,17 @@ export function InviteFriend() {
             <div className="h-[200px] w-[200px] bg-muted animate-pulse rounded-lg" />
           )}
         </Card>
+
+        {/* How to scan instructions */}
+        <div className="bg-muted/50 rounded-xl p-4 max-w-sm text-center space-y-2">
+          <p className="text-sm font-medium">How your friend scans this:</p>
+          <div className="text-xs text-muted-foreground space-y-1">
+            <p>1. Open SplitEase on their phone</p>
+            <p>2. Go to <span className="font-semibold text-foreground">Settings → Scan Invite Code</span></p>
+            <p>3. Point camera at this QR</p>
+          </div>
+        </div>
+
 
         <div className="w-full max-w-sm space-y-4">
           <div className="relative">
