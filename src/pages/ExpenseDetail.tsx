@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { api } from "../utils/api"
 import { ArrowLeft, Pencil, Trash2, Calendar, Receipt, Loader2, RotateCcw } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -8,18 +10,27 @@ import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Skeleton } from "../components/ui/skeleton"
 import { CommentSection } from "../components/CommentSection"
 
-
-
 export function ExpenseDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { allExpenses, friends, groups, deleteExpense, restoreExpense, currentUser, loading } = useData()
+  const { allExpenses, friends, groups, deleteExpense, restoreExpense, currentUser, loading: contextLoading } = useData()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
   
-  const expense = allExpenses.find(e => e.id === id)
+  // Try to find in context first
+  const cachedExpense = allExpenses.find(e => e.id === id)
+
+  // Fetch from API if not in context
+  const { data: fetchedExpense, isLoading: isLoadingExpense } = useQuery({
+     queryKey: ['expense', id],
+     queryFn: () => api.get(`/api/expenses/${id}`),
+     enabled: !!id && !cachedExpense 
+  })
+
+  // Prioritize cached, fallback to fetched
+  const expense = cachedExpense || fetchedExpense
 
   // Helper functions must be defined before use if used in useMemo or other hooks
   const getMemberName = (id: string) => {
@@ -61,9 +72,9 @@ export function ExpenseDetail() {
 
   // Determine who paid
   // Safe access to expense.splits with optional chaining
-  const splits = useMemo(() => (expense?.splits || []).filter(s => s && s.userId), [expense?.splits])
+  const splits = useMemo(() => (expense?.splits || []).filter((s: any) => s && s.userId), [expense?.splits])
   
-  const payers = useMemo(() => splits.filter(s => (s.paidAmount || 0) > 0), [splits])
+  const payers = useMemo(() => splits.filter((s: any) => (s.paidAmount || 0) > 0), [splits])
   
   const paidText = useMemo(() => {
     if (!expense) return ""
@@ -74,7 +85,15 @@ export function ExpenseDetail() {
 
   // --- Conditional Returns AFTER all hooks ---
 
-  if (loading) {
+  // Show skeleton if we don't have the expense and we are fetching it
+  // OR if global context is loading and we haven't found it yet
+  const showSkeleton = (!expense && isLoadingExpense) || (contextLoading && !expense)
+
+  // ... hooks ...
+
+  // --- Conditional Returns AFTER all hooks ---
+
+  if (showSkeleton) {
      return (
         <div className="space-y-6 container mx-auto px-4 py-4">
            {/* Header Skeleton */}
@@ -203,7 +222,7 @@ export function ExpenseDetail() {
              </div>
              
              <div className="space-y-1">
-                {splits.map(split => {
+                {splits.map((split: any) => {
                    const name = getMemberName(split.userId)
                    const avatar = getMemberAvatar(split.userId)
                    

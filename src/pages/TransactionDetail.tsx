@@ -1,4 +1,6 @@
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { api } from "../utils/api"
 import { ArrowLeft, Trash2, RotateCcw, ArrowRightLeft, Calendar, User, Loader2 } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -12,14 +14,24 @@ export function TransactionDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { transactions, currentUser, deleteTransaction, restoreTransaction, friends, loading } = useData()
+  const { transactions, currentUser, deleteTransaction, restoreTransaction, friends, loading: contextLoading } = useData()
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isRestoring, setIsRestoring] = useState(false)
 
-  const transaction = transactions.find(t => t.id === id)
+  const cachedTransaction = transactions.find(t => t.id === id)
 
-  if (loading) {
+  // Fetch from API if not in context
+  const { data: fetchedTransaction, isLoading: isLoadingTransaction } = useQuery({
+     queryKey: ['transaction', id],
+     queryFn: () => api.get(`/api/transactions/${id}`),
+     enabled: !!id && !cachedTransaction 
+  })
+
+  const transaction = cachedTransaction || fetchedTransaction
+  const showSkeleton = (!transaction && isLoadingTransaction) || (contextLoading && !transaction)
+
+  if (showSkeleton) {
     return (
       <div className="fixed inset-0 z-50 bg-background overflow-y-auto">
          <div className="container mx-auto px-4 py-4 min-h-screen flex flex-col">

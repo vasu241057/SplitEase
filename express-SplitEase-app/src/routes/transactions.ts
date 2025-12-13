@@ -53,6 +53,49 @@ router.get('/', async (req, res) => {
   res.json(formatted);
 });
 
+// GET Single Transaction
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  const supabase = createSupabaseClient();
+
+  const { data: t, error } = await supabase
+    .from('transactions')
+    .select('*, friend:friends(owner_id, linked_user_id)')
+    .eq('id', id)
+    .single();
+
+  if (error || !t) {
+    return res.status(404).json({ error: 'Transaction not found' });
+  }
+
+  // Determine fromId and toId (logic from list)
+  let fromId = '';
+  let toId = '';
+  
+  const ownerId = t.friend?.owner_id;
+  const linkedId = t.friend?.linked_user_id;
+  
+  if (t.type === 'paid') {
+      fromId = ownerId;
+      toId = linkedId || t.friend_id;
+  } else {
+      fromId = linkedId || t.friend_id;
+      toId = ownerId;
+  }
+
+  const formatted = {
+      ...t,
+      friendId: t.friend_id,
+      groupId: t.group_id,
+      fromId,
+      toId,
+      deleted: t.deleted || false,
+      description: "Settle Up"
+  };
+
+  res.json(formatted);
+});
+
 // Helper to notify participants
 const notifyTransactionParticipants = async (
   req: any,

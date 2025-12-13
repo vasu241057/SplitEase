@@ -51,6 +51,39 @@ router.get('/', async (req, res) => {
   res.json(formatted);
 });
 
+// GET Single Expense
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  const userId = (req as any).user.id;
+  const supabase = createSupabaseClient();
+
+  // Fetch expense with splits
+  const { data: e, error } = await supabase
+    .from('expenses')
+    .select('*, splits:expense_splits(*)')
+    .eq('id', id)
+    .single();
+
+  if (error || !e) {
+    return res.status(404).json({ error: 'Expense not found' });
+  }
+
+  // Format
+  const formatted = {
+    ...e,
+    payerId: e.payer_user_id || e.payer_id || userId, // Fallback might be wrong if viewer is not payer, but consistency with list
+    groupId: e.group_id,
+    splits: e.splits.map((s: any) => ({
+      userId: s.user_id || s.friend_id || userId, // logic matches list
+      amount: s.amount,
+      paidAmount: s.paid_amount,
+      paid: s.paid
+    }))
+  };
+
+  res.json(formatted);
+});
+
 // Helper to notify participants
 const notifyExpenseParticipants = async (
   req: any,
