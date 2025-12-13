@@ -165,6 +165,35 @@ router.post('/', async (req, res) => {
   const { description, amount, date, payerId, splits, groupId } = req.body;
   const supabase = createSupabaseClient();
   
+  // === FIX: Validate expense integrity ===
+  const TOLERANCE = 0.01;
+  
+  // 1. Amount must be positive
+  if (typeof amount !== 'number' || amount <= 0) {
+    return res.status(400).json({ error: "Expense amount must be a positive number." });
+  }
+  
+  // 2. Splits must exist
+  if (!Array.isArray(splits) || splits.length === 0) {
+    return res.status(400).json({ error: "Expense must have at least one split." });
+  }
+  
+  // 3. All split amounts must be non-negative
+  const hasNegativeSplit = splits.some((s: any) => (s.amount || 0) < 0);
+  if (hasNegativeSplit) {
+    return res.status(400).json({ error: "Split amounts cannot be negative." });
+  }
+  
+  // 4. Sum of splits must equal expense amount
+  const splitSum = splits.reduce((sum: number, s: any) => sum + (s.amount || 0), 0);
+  if (Math.abs(splitSum - amount) > TOLERANCE) {
+    return res.status(400).json({ 
+      error: `Split amounts (${splitSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
+    });
+  }
+  // === END validation ===
+
+  
   const { data: expense, error: expenseError } = await supabase
     .from('expenses')
     .insert([{
@@ -229,7 +258,30 @@ router.put('/:id', async (req, res) => {
   const { description, amount, date, payerId, splits, groupId } = req.body;
   const supabase = createSupabaseClient();
 
-  // ... (rest of logic)
+  // === FIX: Validate expense integrity (same as POST) ===
+  const TOLERANCE = 0.01;
+  
+  if (typeof amount !== 'number' || amount <= 0) {
+    return res.status(400).json({ error: "Expense amount must be a positive number." });
+  }
+  
+  if (!Array.isArray(splits) || splits.length === 0) {
+    return res.status(400).json({ error: "Expense must have at least one split." });
+  }
+  
+  const hasNegativeSplit = splits.some((s: any) => (s.amount || 0) < 0);
+  if (hasNegativeSplit) {
+    return res.status(400).json({ error: "Split amounts cannot be negative." });
+  }
+  
+  const splitSum = splits.reduce((sum: number, s: any) => sum + (s.amount || 0), 0);
+  if (Math.abs(splitSum - amount) > TOLERANCE) {
+    return res.status(400).json({ 
+      error: `Split amounts (${splitSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
+    });
+  }
+  // === END validation ===
+
 
   const { error: expenseError } = await supabase
     .from('expenses')

@@ -106,10 +106,13 @@ export function Friends() {
                     {/* Buckets Breakdown */}
                     {(() => {
                          const breakdown = getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
-                         const visibleBreakdown = breakdown.slice(0, 3);
-                         const remaining = breakdown.length - 3;
                          
                          if (breakdown.length === 0) return null;
+
+                         // Rules: 1-3 = show all, >3 = show 2 + remaining
+                         const showAll = breakdown.length <= 3;
+                         const visibleBreakdown = showAll ? breakdown : breakdown.slice(0, 2);
+                         const remaining = breakdown.length - 2;
 
                          return (
                             <div className="space-y-1 mt-2">
@@ -121,7 +124,7 @@ export function Friends() {
                                         </span>
                                     </div>
                                 ))}
-                                {remaining > 0 && (
+                                {!showAll && remaining > 0 && (
                                     <p className="text-xs text-muted-foreground italic">
                                         + {remaining} more balances
                                     </p>

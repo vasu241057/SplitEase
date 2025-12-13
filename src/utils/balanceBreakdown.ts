@@ -75,17 +75,24 @@ export function getFriendBalanceBreakdown(
 
   let ngBal = 0
   ngExpenses.forEach(e => {
+    // Helper to match friend in splits (check both friend.id and linked_user_id)
+    const isFriendSplit = (s: any) => 
+      s.userId === friend.id || (friend.linked_user_id && s.userId === friend.linked_user_id)
+    
     if (e.payerId === currentUser.id) {
-      const s = e.splits.find(s => s.userId === friend.id)
+      // I paid - look for friend's split
+      const s = e.splits.find(isFriendSplit)
       if (s) ngBal += s.amount || 0
     } else if (
       e.payerId === friend.id ||
       (friend.linked_user_id && e.payerId === friend.linked_user_id)
     ) {
+      // Friend paid - look for my split
       const s = e.splits.find(s => s.userId === currentUser.id)
       if (s) ngBal -= s.amount || 0
     }
   })
+
   ngTrans.forEach((t: any) => {
     if (t.fromId === currentUser.id) ngBal += t.amount
     else ngBal -= t.amount

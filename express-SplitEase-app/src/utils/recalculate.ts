@@ -73,29 +73,23 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
       netBalances.set(personId, current + (paid - cost));
     });
     
-    // NOTE: If the Payer is NOT in the splits (e.g. paid but didn't participate?), 
-    // we need to add their "Paid" amount if not already accounted for.
-    // Checking if Payer was part of splits:
-    if (!netBalances.has(payerId)) {
-       // Ideally Payer IS in splits if they paid. 
-       // But if `expense.payer_user_id` is set, and they are not in `expense_splits`...
-       // The `expense` table `amount` is the total.
-       // We might need to credit the Payer for the Total Amount if not tracked in individual splits 'paid_amount'.
-       // Implementation check: 
-       // `AddExpense.tsx` likely adds splits for everyone.
-       // If Payer isn't in splits, something is wrong or they just paid for others.
-       // Let's assume for now splits table is comprehensive. 
-       // If issues arise w/ "Payer not getting credit", check here.
-       
-       // actually, let's verify if `paid_amount` sums to total.
-       const totalPaidInSplits = expense.splits.reduce((sum: number, s: any) => sum + (s.paid_amount || 0), 0);
-       if (totalPaidInSplits < expense.amount && totalPaidInSplits === 0) {
-          // Fallback: Splits don't have paid info, Payer paid everything.
-          // Add +Total to Payer's net.
-          const current = netBalances.get(payerId) || 0;
-          netBalances.set(payerId, current + expense.amount);
-       }
+    // FIX: Ensure payer is always credited for the full expense amount
+    // Calculate how much was already credited via paid_amount in splits
+    const totalPaidInSplits = expense.splits.reduce(
+      (sum: number, s: any) => sum + (s.paid_amount || 0), 
+      0
+    );
+    
+    // If paid_amount sum doesn't match expense amount, credit the difference to payer
+    const unpaidAmount = expense.amount - totalPaidInSplits;
+    
+    if (unpaidAmount > 0.01) {
+      // Credit the missing amount to the payer
+      const current = netBalances.get(payerId) || 0;
+      netBalances.set(payerId, current + unpaidAmount);
+      console.log(`[DEBUG] Expense ${expense.id}: Credited payer ${payerId} with missing amount ${unpaidAmount}`);
     }
+
 
     // 4. Simplify Debt (Debtors -> Creditors)
     const debtors: {id: string, amount: number}[] = [];

@@ -290,7 +290,8 @@ export function FriendDetail() {
                     return (
                         <Card 
                             key={`trans-${item.id}`}
-                            className="overflow-hidden hover:bg-muted/50 transition-colors"
+                            className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
+                            onClick={() => navigate(`/payments/${transaction.id}`)}
                         >
                             <div className="flex items-center p-4 gap-4">
                                 <div className="h-10 w-10 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center text-green-600">

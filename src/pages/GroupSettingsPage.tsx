@@ -1,0 +1,306 @@
+import { useState } from "react"
+import { useParams, useNavigate } from "react-router-dom"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info } from "lucide-react"
+import { useData } from "../context/DataContext"
+import { useGroupBalance } from "../hooks/useGroupBalance"
+import { api } from "../utils/api"
+import { Button } from "../components/ui/button"
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
+import { Input } from "../components/ui/input"
+import { cn } from "../utils/cn"
+
+export function GroupSettingsPage() {
+    const { id } = useParams<{ id: string }>()
+    const navigate = useNavigate()
+    const { groups, currentUser, refreshGroups } = useData()
+    
+    // Derived State
+    const group = groups.find(g => g.id === id)
+    const { memberBalances, isGroupSettled } = useGroupBalance(group)
+
+    // Local State
+    const [isEditingName, setIsEditingName] = useState(false)
+    const [newName, setNewName] = useState(group?.name || "")
+    const [confirmAction, setConfirmAction] = useState<{
+        type: 'remove' | 'leave' | 'delete',
+        title: string,
+        message: string,
+        onConfirm: () => void
+    } | null>(null)
+    const [errorModal, setErrorModal] = useState<string | null>(null)
+
+    // Handlers
+    const handleSaveName = async () => {
+        if (!newName.trim() || !group) return;
+        try {
+            await api.put(`/api/groups/${group.id}`, { name: newName });
+            await refreshGroups();
+            setIsEditingName(false);
+        } catch (error: any) {
+             setErrorModal("Failed to rename group");
+        }
+    }
+
+    const handleRemoveMember = async (memberId: string) => {
+        if (!group) return;
+        try {
+            await api.delete(`/api/groups/${group.id}/members/${memberId}`);
+            await refreshGroups();
+        } catch (error: any) {
+            setErrorModal(error.response?.data?.error || "Failed to remove member");
+        }
+    }
+
+    const handleLeaveGroup = async () => {
+        if (!group) return;
+        try {
+            await api.post(`/api/groups/${group.id}/leave`, {});
+            await refreshGroups();
+            navigate('/groups');
+        } catch (error: any) {
+            setErrorModal(error.response?.data?.error || "Failed to leave group.");
+        }
+    }
+
+    const handleDeleteGroup = async () => {
+         if (!group) return;
+        try {
+            await api.delete(`/api/groups/${group.id}`)
+            await refreshGroups()
+            navigate('/groups')
+        } catch (error: any) {
+            setErrorModal(error.response?.data?.error || "Failed to delete group.");
+        }
+    }
+    
+    // Add Member is complex because it uses a modal in GroupDetail. 
+    // For now, let's keep Add Member flow simple or redirect back to GroupDetail with 'addMember' state?
+    // OR we can move AddMember modal here? 
+    // The user said "Keep all existing settings functionality".
+    // "Add Member" button was in the settings modal. 
+    // In GroupSettings modal, it called `onAddMember`.
+    // Let's implement a simple prompt or navigate back to group with a flag?
+    // Actually, making it a page means we can have our own Add Member UI here if we want.
+    // Simplifying: Use the existing logic or just a simple search interface here?
+    // Let's assume for now we don't refactor AddMember totally.
+    // Wait, the "Add Member" logic in GroupDetail was tightly coupled with `availableFriends`.
+    // I should ideally copy that logic here to keep it self-contained in Settings Page.
+    // It's better UX to have it here.
+
+    if (!group) return <div>Group not found</div>
+
+    return (
+        <div className="min-h-screen bg-background pb-20">
+             {/* Header */}
+            <div className="flex items-center gap-4 sticky top-0 bg-background/95 backdrop-blur z-10 py-2 border-b px-4">
+                <Button variant="ghost" size="icon" onClick={() => navigate(`/groups/${id}`)}>
+                    <ArrowLeft className="h-5 w-5" />
+                </Button>
+                <h1 className="text-xl font-bold">Group Settings</h1>
+            </div>
+
+            <div className="p-4 space-y-6 max-w-2xl mx-auto">
+                 {/* Group Name Editing */}
+                 <div className="flex items-center gap-2">
+                     {isEditingName ? (
+                        <div className="flex items-center gap-2 flex-1">
+                            <Input 
+                                value={newName} 
+                                onChange={(e) => setNewName(e.target.value)}
+                                className="h-10 text-lg font-bold"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveName();
+                                    if (e.key === 'Escape') setIsEditingName(false);
+                                }}
+                            />
+                            <Button size="icon" variant="ghost" className="text-green-600" onClick={handleSaveName}>
+                                <Check className="h-5 w-5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="text-destructive" onClick={() => setIsEditingName(false)}>
+                                <X className="h-5 w-5" />
+                            </Button>
+                        </div>
+                     ) : (
+                        <div className="flex items-center gap-2 group cursor-pointer w-full p-2 hover:bg-muted rounded-lg transition-colors" onClick={() => { setNewName(group.name); setIsEditingName(true); }}>
+                            <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                                <Users className="h-6 w-6" />
+                            </div>
+                            <div className="flex-1">
+                                <p className="text-sm text-muted-foreground">Group Name</p>
+                                <div className="flex items-center gap-2">
+                                    <h2 className="text-xl font-bold">{group.name}</h2>
+                                    <Pencil className="h-4 w-4 text-muted-foreground opacity-50" />
+                                </div>
+                            </div>
+                        </div>
+                     )}
+                 </div>
+
+                 {/* Members Section */}
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
+                            <Users className="h-4 w-4" /> Members ({group.members.length})
+                        </h3>
+                        {/* 
+                            For "Add Member", since recreating the whole search modal here is a lot of duplicate code,
+                            I will trigger navigation back to GroupDetail with state to open the modal there, 
+                            OR simply implement a basic version. 
+                            Given constraint "Do NOT Refactor unrelated code", moving AddMember logic is risky.
+                            However, the user wants "Group Settings Content Unchanged Functionally". 
+                            If I navigate away to add, it's slightly different flow.
+                            Let's keep it simple: Add Member button here redirects to Group Detail with ?action=addMember
+                         */}
+                        <Button variant="ghost" size="sm" className="h-8 text-primary" onClick={() => navigate(`/groups/${id}`, { state: { action: 'addMember' } })}>
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Add
+                        </Button>
+                    </div>
+                    
+                    <div className="bg-card border rounded-lg overflow-hidden divide-y">
+                        {group.members.map((member: any) => {
+                            const isMe = member.userId === currentUser.id;
+                            const balance = memberBalances[member.id] || 0;
+                            const isSettled = Math.abs(balance) < 0.05;
+                            
+                            return (
+                                <div key={member.id} className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors">
+                                    <div className="flex items-center gap-3">
+                                        <Avatar className="h-8 w-8">
+                                            <AvatarImage src={member.avatar} />
+                                            <AvatarFallback>{member.name[0]}</AvatarFallback>
+                                        </Avatar>
+                                        <div>
+                                            <p className="font-medium text-sm flex items-center gap-2">
+                                                {isMe ? "You" : member.name}
+                                                {isMe && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">Admin</span>}
+                                            </p>
+                                            {!isSettled && (
+                                                <p className={cn("text-xs", balance < 0 ? 'text-red-500' : 'text-green-500')}>
+                                                    {balance < 0 ? 'Owes' : 'Owed'} ₹{Math.abs(balance).toFixed(2)}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    {!isMe && (
+                                        <Button 
+                                            variant="ghost" 
+                                            size="icon" 
+                                            className={cn("h-8 w-8", !isSettled ? 'opacity-30 cursor-not-allowed text-muted-foreground' : 'text-muted-foreground hover:text-destructive hover:bg-destructive/10')}
+                                            disabled={!isSettled}
+                                            onClick={() => {
+                                                if (!isSettled) return;
+                                                setConfirmAction({
+                                                    type: 'remove',
+                                                    title: `Remove ${member.name}?`,
+                                                    message: `${member.name} has settled all balances. Are you sure you want to remove them from the group?`,
+                                                    onConfirm: () => handleRemoveMember(member.id)
+                                                });
+                                            }}
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {/* Actions Section */}
+                 <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
+                        Actions
+                    </h3>
+                    
+                    <div className="grid gap-2">
+                        <Button variant="outline" className="w-full justify-start h-12" onClick={() => navigate(`/groups/${id}`, { state: { action: 'settleUp' } })}>
+                            <Wallet className="h-5 w-5 mr-3 text-green-600" />
+                            <span className="flex-1 text-left">Settle Up</span>
+                        </Button>
+                        
+                        <Button variant="outline" className="w-full justify-start h-12 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20" onClick={() => {
+                            setConfirmAction({
+                                type: 'leave',
+                                title: "Leave Group?",
+                                message: "Are you sure you want to leave this group?",
+                                onConfirm: handleLeaveGroup
+                            });
+                        }}>
+                            <LogOut className="h-5 w-5 mr-3" />
+                            <span className="flex-1 text-left">Leave Group</span>
+                        </Button>
+
+                         <div className="pt-4 mt-2 border-t space-y-2">
+                            {isGroupSettled ? (
+                                <Button
+                                    variant="destructive"
+                                    className="w-full"
+                                    onClick={() => {
+                                        setConfirmAction({
+                                            type: 'delete',
+                                            title: "Delete Group?",
+                                            message: "This will permanently delete the group and all its expenses. This action cannot be undone.",
+                                            onConfirm: handleDeleteGroup
+                                        });
+                                    }}
+                                >
+                                    Delete Group
+                                </Button>
+                            ) : (
+                                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 text-center">
+                                     <p className="text-sm text-yellow-600 dark:text-yellow-400 font-medium">
+                                         Group cannot be deleted
+                                     </p>
+                                     <p className="text-xs text-muted-foreground mt-1">
+                                         All balances must be settled first.
+                                     </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+             {/* Confirmation Modal Overlay */}
+             {confirmAction && (
+                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-in fade-in duration-200">
+                    <div className="bg-card border shadow-lg rounded-lg p-6 max-w-sm w-full space-y-4">
+                        <h3 className="text-lg font-bold">{confirmAction.title}</h3>
+                        <p className="text-sm text-muted-foreground">{confirmAction.message}</p>
+                        <div className="flex gap-3 justify-end">
+                            <Button variant="outline" onClick={() => setConfirmAction(null)}>Cancel</Button>
+                            <Button 
+                                variant="destructive" 
+                                onClick={() => {
+                                    confirmAction.onConfirm();
+                                    setConfirmAction(null);
+                                }}
+                            >
+                                Confirm
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {/* Generic Error Modal */}
+            {errorModal && (
+                <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-6 animate-in fade-in duration-200">
+                    <div className="bg-background rounded-lg p-6 max-w-sm w-full space-y-4 shadow-xl">
+                        <div className="flex items-center gap-2 text-destructive">
+                            <Info className="h-6 w-6" />
+                            <h3 className="font-bold text-lg">Action Failed</h3>
+                        </div>
+                        <p className="text-muted-foreground">{errorModal}</p>
+                        <div className="flex justify-end">
+                            <Button onClick={() => setErrorModal(null)}>Okay</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}

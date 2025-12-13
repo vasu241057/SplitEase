@@ -7,6 +7,7 @@ import { Groups } from "./pages/Groups"
 import { GroupDetail } from "./pages/GroupDetail"
 import { Activity } from "./pages/Activity"
 import { Settings } from "./pages/Settings"
+import { GroupSettingsPage } from "./pages/GroupSettingsPage"
 import { AddExpense } from "./pages/AddExpense"
 import { SettleUp } from "./pages/SettleUp"
 import { ExpenseDetail } from "./pages/ExpenseDetail"
@@ -61,6 +62,7 @@ function App() {
             <Route path="/expenses/:id" element={<ExpenseDetail />} />
             <Route path="/payments/:id" element={<TransactionDetail />} />
             <Route path="/activity" element={<Activity />} />
+            <Route path="/groups/:id/settings" element={<GroupSettingsPage />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>
