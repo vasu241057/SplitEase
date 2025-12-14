@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Plus, Bell, X } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useData } from "../context/DataContext"
@@ -15,8 +15,25 @@ const NOTIF_BANNER_DISMISSED_KEY = "splitease_notif_banner_dismissed"
 
 export function Friends() {
   const { friends, loading, currentUser, groups, expenses, transactions } = useData()
-
   
+  // Calculate effective balances - use breakdown sum for group-only friends
+  const friendsWithEffectiveBalance = useMemo(() => {
+    if (!currentUser) return friends;
+    
+    return friends.map(friend => {
+      const isGroupMemberOnly = (friend as any).isGroupMemberOnly;
+      
+      if (isGroupMemberOnly) {
+        // For group-only friends, calculate balance from breakdown
+        const breakdown = getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
+        const calculatedBalance = breakdown.reduce((sum, item) => sum + item.amount, 0);
+        return { ...friend, balance: calculatedBalance, _calculatedFromBreakdown: true };
+      }
+      
+      return friend;
+    });
+  }, [friends, currentUser, groups, expenses, transactions]);
+
   // Notification banner state - only show once
   const [showNotifBanner, setShowNotifBanner] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -28,11 +45,11 @@ export function Friends() {
     localStorage.setItem(NOTIF_BANNER_DISMISSED_KEY, "true")
   }
   
-  const totalOwed = friends
+  const totalOwed = friendsWithEffectiveBalance
     .filter((f) => f.balance > 0)
     .reduce((acc, curr) => acc + curr.balance, 0)
 
-  const totalOwe = friends
+  const totalOwe = friendsWithEffectiveBalance
     .filter((f) => f.balance < 0)
     .reduce((acc, curr) => acc + Math.abs(curr.balance), 0)
 
@@ -100,12 +117,12 @@ export function Friends() {
                </div>
              </Card>
            ))
-        ) : friends.length === 0 ? (
+        ) : friendsWithEffectiveBalance.length === 0 ? (
           <p className="text-muted-foreground text-center py-8">
             You haven't added any friends yet.
           </p>
         ) : (
-          friends.map((friend) => (
+          friendsWithEffectiveBalance.map((friend) => (
             <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
                 <div className="flex items-start gap-4">

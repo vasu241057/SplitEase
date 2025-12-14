@@ -16,9 +16,9 @@ export function FriendDetail() {
   
   const friend = friends.find((f) => f.id === id)
 
-  // Memoize breakdown calculation for the top "Bucket" view
+  // Calculate breakdown for the "Bucket" view
   const breakdown = useMemo(() => {
-    return getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions)
+    return getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
   }, [friend, currentUser, groups, expenses, transactions])
 
 

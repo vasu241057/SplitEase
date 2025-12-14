@@ -16,7 +16,11 @@ export function GroupSettingsPage() {
     
     // Derived State
     const group = groups.find(g => g.id === id)
-    const { memberBalances, isGroupSettled } = useGroupBalance(group)
+    const { isGroupSettled, isMemberFullySettled } = useGroupBalance(group)
+    
+    // Find current user's member record to check if they're settled
+    const currentUserMember = group?.members.find(m => m.userId === currentUser.id)
+    const isCurrentUserSettled = currentUserMember ? isMemberFullySettled(currentUserMember.id) : true
 
     // Local State
     const [isEditingName, setIsEditingName] = useState(false)
@@ -137,7 +141,7 @@ export function GroupSettingsPage() {
                      )}
                  </div>
 
-                 {/* Members Section */}
+                {/* Members Section */}
                 <div className="space-y-3">
                     <div className="flex items-center justify-between">
                         <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
@@ -161,8 +165,8 @@ export function GroupSettingsPage() {
                     <div className="bg-card border rounded-lg overflow-hidden divide-y">
                         {group.members.map((member: any) => {
                             const isMe = member.userId === currentUser.id;
-                            const balance = memberBalances[member.id] || 0;
-                            const isSettled = Math.abs(balance) < 0.05;
+                            // Use pairwise balance check instead of net position
+                            const isSettled = isMemberFullySettled(member.id);
                             
                             return (
                                 <div key={member.id} className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors">
@@ -174,12 +178,11 @@ export function GroupSettingsPage() {
                                         <div>
                                             <p className="font-medium text-sm flex items-center gap-2">
                                                 {isMe ? "You" : member.name}
-                                                {isMe && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">Admin</span>}
+                                                {member.userId === group.createdBy && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">Admin</span>}
                                             </p>
-                                            {!isSettled && (
-                                                <p className={cn("text-xs", balance < 0 ? 'text-red-500' : 'text-green-500')}>
-                                                    {balance < 0 ? 'Owes' : 'Owed'} ₹{Math.abs(balance).toFixed(2)}
-                                                </p>
+                                            {/* Show 'Not settled' text for members who cannot be removed */}
+                                            {!isMe && !isSettled && (
+                                                <p className="text-xs text-amber-500">Not settled - cannot remove</p>
                                             )}
                                         </div>
                                     </div>
@@ -221,17 +224,27 @@ export function GroupSettingsPage() {
                             <span className="flex-1 text-left">Settle Up</span>
                         </Button>
                         
-                        <Button variant="outline" className="w-full justify-start h-12 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20" onClick={() => {
-                            setConfirmAction({
-                                type: 'leave',
-                                title: "Leave Group?",
-                                message: "Are you sure you want to leave this group?",
-                                onConfirm: handleLeaveGroup
-                            });
-                        }}>
-                            <LogOut className="h-5 w-5 mr-3" />
-                            <span className="flex-1 text-left">Leave Group</span>
-                        </Button>
+                        {isCurrentUserSettled ? (
+                            <Button variant="outline" className="w-full justify-start h-12 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20" onClick={() => {
+                                setConfirmAction({
+                                    type: 'leave',
+                                    title: "Leave Group?",
+                                    message: "Are you sure you want to leave this group?",
+                                    onConfirm: handleLeaveGroup
+                                });
+                            }}>
+                                <LogOut className="h-5 w-5 mr-3" />
+                                <span className="flex-1 text-left">Leave Group</span>
+                            </Button>
+                        ) : (
+                            <div className="w-full h-12 flex items-center justify-start p-3 rounded-md border border-amber-500/20 bg-amber-500/10">
+                                <LogOut className="h-5 w-5 mr-3 text-amber-500" />
+                                <div className="flex-1">
+                                    <span className="text-sm text-amber-500">Cannot leave group</span>
+                                    <p className="text-xs text-muted-foreground">Settle your balances first</p>
+                                </div>
+                            </div>
+                        )}
 
                          <div className="pt-4 mt-2 border-t space-y-2">
                             {isGroupSettled ? (

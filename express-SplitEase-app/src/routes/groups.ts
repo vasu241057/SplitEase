@@ -27,13 +27,14 @@ router.get('/', async (req, res) => {
 
   const { data: groups, error } = await supabase
     .from('groups')
-    .select('*, group_members(friends(id, name, avatar, linked_user_id))') // Nested fetch
+    .select('*, created_by, group_members(friends(id, name, avatar, linked_user_id, owner_id))') // Include created_by
     .in('id', groupIds);
     
   if (error) return res.status(500).json({ error: error.message });
   
   const formattedGroups = groups.map((g: any) => ({
     ...g,
+    createdBy: g.created_by, // Include creator ID for Admin badge
     members: g.group_members.map((gm: any) => ({
         id: gm.friends.id,
         name: gm.friends.name,
@@ -49,16 +50,18 @@ router.post('/', async (req, res) => {
   const { name, type, members } = req.body;
   const supabase = createSupabaseClient();
   
+  // Get creator ID from authenticated user
+  const creatorId = (req as any).user?.id;
+  
   const { data: group, error: groupError } = await supabase
     .from('groups')
-    .insert([{ name, type }])
+    .insert([{ name, type, created_by: creatorId }])
     .select()
     .single();
 
   if (groupError) return res.status(500).json({ error: groupError.message });
 
-  // Add CREATOR to the group immediately
-  const creatorId = (req as any).user?.id;
+  // Add CREATOR to the group immediately (creatorId already declared above)
   // console.log('[POST /groups] Creator ID:', creatorId);
   // console.log('[POST /groups] Original members payload:', members);
   
@@ -77,13 +80,23 @@ router.post('/', async (req, res) => {
       if (selfFriend) {
           selfFriendId = selfFriend.id;
       } else {
-           // Create Self Friend
-           // Ideally we fetch user profile name, but 'You' is safe fallback or use email if needed.
-           // We can skip profile fetch for speed if we trust 'You' or just update it later.
+           // Create Self Friend - FETCH REAL PROFILE NAME first
+           // Get user's profile name from profiles table
+           let profileName = 'User'; // Safe fallback
+           const { data: profile } = await supabase
+               .from('profiles')
+               .select('full_name')
+               .eq('id', creatorId)
+               .single();
+           
+           if (profile?.full_name) {
+               profileName = profile.full_name;
+           }
+           
            const { data: newFriend, error: createError } = await supabase
             .from('friends')
             .insert([{ 
-                name: 'You', 
+                name: profileName,  // Use actual profile name, not 'You'
                 owner_id: creatorId, 
                 linked_user_id: creatorId,
                 balance: 0 
@@ -184,22 +197,30 @@ router.delete('/:id/members/:friendId', async (req, res) => {
     const { id, friendId } = req.params;
     const supabase = createSupabaseClient();
 
-    // 1. Balance Check for this member
-    // We need to find the user_id associated with this friend_id to check expense 'payer_id' and split 'user_id'
-        const { data: friendRecord } = await supabase
+    // 1. Get the friend record to check linked_user_id
+    const { data: friendRecord } = await supabase
         .from('friends')
         .select('linked_user_id')
         .eq('id', friendId)
         .single();
 
-    const userIdToCheck = friendRecord?.linked_user_id; // Might be null if it's a dummy friend?
-    // If it's a dummy friend, we check split.friend_id (Not implemented in my logic yet)?
-    // Wait, splits usually store user_id for app users. 
-    // If I add "Bob" (manual friend), splits table? 
-    // Schema check: splits table has (expense_id, user_id, amount). Does it have friend_id?
-    // I need to assume standard schema. If manual friend, user_id is null?
-    // Let's assume strict check: If you are in involved in ANY expense (payer or split), you can't be deleted.
+    const linkedUserId = friendRecord?.linked_user_id;
+    
+    // Create matcher function to check if an ID matches this member
+    const matchesMember = (id: string | null | undefined) => {
+        if (!id) return false;
+        if (id === friendId) return true;
+        if (linkedUserId && id === linkedUserId) return true;
+        return false;
+    };
 
+    // 2. Fetch all group members to get their IDs for pairwise checks
+    const { data: members } = await supabase
+        .from('group_members')
+        .select('friend_id, friends(linked_user_id)')
+        .eq('group_id', id);
+    
+    // 3. Fetch group expenses and transactions
     const { data: expenses, error: expenseError } = await supabase
         .from('expenses')
         .select('*, expense_splits(*)')
@@ -207,72 +228,70 @@ router.delete('/:id/members/:friendId', async (req, res) => {
         .eq('deleted', false);
 
     if (expenseError) return res.status(500).json({ error: expenseError.message });
-
-    let isInvolved = false;
-    let balance = 0;
-
-    // Helper to identify if this member is involved
-    const isMemberInvolved = (expense: any) => {
-         // Check Payer
-         // If expense.payer_id matches userIdToCheck (if exists) 
-         // OR we need to check if payer logic uses friend_id? 
-         // DB Schema: payer_id is UUID (auth.users). 
-         // If manual friend "Bob", he can't pay in the App context easily unless creator pays "on behalf"?
-         // Let's rely on Splits.
-         
-         const split = expense.expense_splits.find((s: any) => {
-             // Match User ID
-             if (userIdToCheck && s.user_id === userIdToCheck) return true;
-             // FUTURE: Match Friend ID if schema supports it
-             return false;
-         });
-
-         if (split) return true;
-         
-         if (userIdToCheck && expense.payer_id === userIdToCheck) return true;
-
-         return false;
-    };
     
-    // Actually, simple balance check logic logic from 'leave' endpoint works if we have userId.
-    // If no userId (manual friend), we might just allow delete OR check if 'friend_id' is used?
-    // I'll stick to: If User Linked, check balance. If Manual, check generic "Involvement"?
+    const derivedTransactions = await getGroupTransactionsWithParties(supabase, id, false);
+
+    // 4. Check pairwise balance with EACH other member
+    let hasOutstandingBalance = false;
+    let balanceDetails: string[] = [];
     
-    if (userIdToCheck) {
-         // FIX: Use helper to fetch transactions with proper derived parties
-         const derivedTransactions = await getGroupTransactionsWithParties(supabase, id, false);
-         
-         expenses.forEach((expense: any) => {
-            // FIX: Check both payer_user_id and payer_id
+    for (const otherMember of (members || [])) {
+        if (otherMember.friend_id === friendId) continue; // Skip self
+        
+        const otherLinkedUserId = (otherMember.friends as any)?.linked_user_id;
+        
+        // Matcher for other member
+        const matchesOther = (id: string | null | undefined) => {
+            if (!id) return false;
+            if (id === otherMember.friend_id) return true;
+            if (otherLinkedUserId && id === otherLinkedUserId) return true;
+            return false;
+        };
+        
+        let pairwiseBalance = 0;
+        
+        // Calculate pairwise expense balance
+        expenses?.forEach((expense: any) => {
             const payerId = expense.payer_user_id || expense.payer_id;
-            if (payerId === userIdToCheck) {
-                const mySplit = expense.expense_splits.find((s: any) => s.user_id === userIdToCheck);
-                const myShare = mySplit ? mySplit.amount : 0;
-                balance += (expense.amount - myShare);
-            } else {
-                const mySplit = expense.expense_splits.find((s: any) => s.user_id === userIdToCheck);
-                if (mySplit) balance -= mySplit.amount;
+            
+            if (matchesMember(payerId)) {
+                // This member paid - find other's split (check both user_id and friend_id)
+                const split = expense.expense_splits?.find((s: any) => 
+                    matchesOther(s.user_id) || matchesOther(s.friend_id)
+                );
+                if (split) pairwiseBalance += parseFloat(split.amount) || 0;
+            } else if (matchesOther(payerId)) {
+                // Other member paid - find this member's split
+                const split = expense.expense_splits?.find((s: any) => 
+                    matchesMember(s.user_id) || matchesMember(s.friend_id)
+                );
+                if (split) pairwiseBalance -= parseFloat(split.amount) || 0;
             }
-         });
-         
-         // Apply transactions using derived parties
-         derivedTransactions.forEach((t) => {
-             if (t.fromId === userIdToCheck) balance += t.amount;
-             else if (t.toId === userIdToCheck) balance -= t.amount;
-         });
-         
-         if (Math.abs(balance) > BALANCE_TOLERANCE) {
-             return res.status(400).json({ error: "Cannot remove member with outstanding balance." });
-         }
-
-
-    } else {
-         // Manual Friend Check: Just check if they adhere to any expense?
-         // Without linked_user_id, it's hard to track 'payer_id' matches.
-         // Usually manual friends don't pay?
-         // I'll proceed with deletion for manual friends for now, assuming lesser risk/complexity.
+        });
+        
+        // Calculate pairwise transaction balance
+        derivedTransactions.forEach((t) => {
+            if (matchesMember(t.fromId) && matchesOther(t.toId)) {
+                pairwiseBalance += t.amount;
+            } else if (matchesOther(t.fromId) && matchesMember(t.toId)) {
+                pairwiseBalance -= t.amount;
+            }
+        });
+        
+        if (Math.abs(pairwiseBalance) > BALANCE_TOLERANCE) {
+            hasOutstandingBalance = true;
+            balanceDetails.push(`Balance with member ${otherMember.friend_id}: ${pairwiseBalance.toFixed(2)}`);
+        }
+    }
+    
+    if (hasOutstandingBalance) {
+        console.log(`[Remove Member] Cannot remove ${friendId}: ${balanceDetails.join(', ')}`);
+        return res.status(400).json({ 
+            error: "Cannot remove member with outstanding balance. Member must settle all balances first." 
+        });
     }
 
+    // 5. Delete the member from the group
     const { error } = await supabase
         .from('group_members')
         .delete()
@@ -321,60 +340,80 @@ router.post('/:id/leave', async (req, res) => {
 
     const memberFriendId = memberEntry.friend_id;
 
-    // 2. Check Balance
-    // We need to sum up expenses where this user is payer vs involved in splits.
-    // This is complex to do purely in SQL without a view/function. 
-    // We can fetch expenses for this group and calculate JS side, consistent with Frontend logic.
-    
+    // 2. Fetch all group members for pairwise balance check
+    const { data: members } = await supabase
+        .from('group_members')
+        .select('friend_id, friends(linked_user_id)')
+        .eq('group_id', id);
+
     const { data: expenses, error: expenseError } = await supabase
         .from('expenses')
         .select('*, expense_splits(*)')
-        .eq('group_id', id);
+        .eq('group_id', id)
+        .eq('deleted', false);
 
     if (expenseError) return res.status(500).json({ error: expenseError.message });
 
-    // Calculate Balance
-    let balance = 0;
-    // FIX: Use helper to fetch transactions with proper derived parties
     const derivedTransactions = await getGroupTransactionsWithParties(supabase, id, false);
 
-    // -- Expense Calculation --
-    expenses.forEach((expense: any) => {
-        // FIX: Check both payer_user_id and payer_id
-        const payerId = expense.payer_user_id || expense.payer_id;
-        const isPayer = payerId === userId;
+    // Create matcher for current user
+    const matchesMe = (id: string | null | undefined) => {
+        if (!id) return false;
+        if (id === userId) return true;
+        if (id === memberFriendId) return true;
+        return false;
+    };
+
+    // 3. Check PAIRWISE balance with EACH other member
+    let hasOutstandingBalance = false;
+    
+    for (const otherMember of (members || [])) {
+        if (otherMember.friend_id === memberFriendId) continue; // Skip self
         
-        if (isPayer) {
-            // I paid. I am owed by others.
-            const mySplit = expense.expense_splits.find((s: any) => s.user_id === userId);
-            const myShare = mySplit ? mySplit.amount : 0;
-            const totalPaidByMe = expense.amount;
-            balance += (totalPaidByMe - myShare);
-        } else {
-            // Someone else paid.
-            const mySplit = expense.expense_splits.find((s: any) => s.user_id === userId);
-            if (mySplit) {
-                balance -= mySplit.amount;
+        const otherLinkedUserId = (otherMember.friends as any)?.linked_user_id;
+        
+        const matchesOther = (id: string | null | undefined) => {
+            if (!id) return false;
+            if (id === otherMember.friend_id) return true;
+            if (otherLinkedUserId && id === otherLinkedUserId) return true;
+            return false;
+        };
+        
+        let pairwiseBalance = 0;
+        
+        expenses?.forEach((expense: any) => {
+            const payerId = expense.payer_user_id || expense.payer_id;
+            
+            if (matchesMe(payerId)) {
+                const split = expense.expense_splits?.find((s: any) => 
+                    matchesOther(s.user_id) || matchesOther(s.friend_id)
+                );
+                if (split) pairwiseBalance += parseFloat(split.amount) || 0;
+            } else if (matchesOther(payerId)) {
+                const split = expense.expense_splits?.find((s: any) => 
+                    matchesMe(s.user_id) || matchesMe(s.friend_id)
+                );
+                if (split) pairwiseBalance -= parseFloat(split.amount) || 0;
             }
+        });
+        
+        derivedTransactions.forEach((t) => {
+            if (matchesMe(t.fromId) && matchesOther(t.toId)) {
+                pairwiseBalance += t.amount;
+            } else if (matchesOther(t.fromId) && matchesMe(t.toId)) {
+                pairwiseBalance -= t.amount;
+            }
+        });
+        
+        if (Math.abs(pairwiseBalance) > BALANCE_TOLERANCE) {
+            hasOutstandingBalance = true;
+            break;
         }
-    });
-
-    // -- Transaction Calculation using derived parties --
-    derivedTransactions.forEach((t) => {
-        if (t.fromId === userId) {
-            // I paid someone (Settle Up) → increases my balance
-            balance += t.amount;
-        } else if (t.toId === userId) {
-            // Someone paid me → decreases my balance
-            balance -= t.amount;
-        }
-    });
-
-    // Check with tolerance (use consistent constant)
-    if (Math.abs(balance) > BALANCE_TOLERANCE) {
+    }
+    
+    if (hasOutstandingBalance) {
         return res.status(400).json({ 
-            error: "Cannot leave group with outstanding balance. Please settle up first.",
-            balance: balance 
+            error: "Cannot leave group with outstanding balance. Please settle up first."
         });
     }
 

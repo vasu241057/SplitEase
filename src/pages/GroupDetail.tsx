@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info } from "lucide-react"
+import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
@@ -9,6 +9,7 @@ import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
+import { matchesMember, findMemberSplit, type GroupMember } from "../utils/groupBalanceUtils"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -63,35 +64,56 @@ export function GroupDetail() {
     )
   }, [friends, group?.members, searchQuery])
 
-
-  // View-Specific Balances (For the Cards "You owe X") - Keeping original logic for Display
+  // View-Specific Balances (For the Cards "You owe X") - Using unified utilities
   const balancesRelativeToMe = useMemo(() => {
        if (!group) return [];
        
        const groupExpenses = expenses.filter(e => e.groupId === group.id);
        const groupTransactions = transactions.filter(t => t.groupId === group.id && !t.deleted);
+       
+       // Find current user's member record in the group to get their friend_id
+       const myMemberRecord = group.members.find(
+           (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+       );
+       
+       // Use friend_id from group membership, falling back to global user ID
+       const meRef: GroupMember = { 
+           id: myMemberRecord?.id || currentUser.id, 
+           userId: currentUser.id 
+       };
       
        const results = group.members.map(member => {
-            if (member.id === currentUser.id || member.userId === currentUser.id) return null;
+            if (member.id === currentUser.id || member.userId === currentUser.id) {
+                return null;
+            }
+            
+            // Other member as GroupMember for unified matching
+            const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
              
             let balance = 0;
-            const isMember = (id: string) => id === member.id || (member.userId && id === member.userId);
-            const isCurrentUser = (id: string) => id === currentUser.id;
 
-             groupExpenses.forEach(expense => {
-                if (isCurrentUser(expense.payerId)) {
-                    // I paid
-                    const split = expense.splits.find(s => isMember(s.userId));
-                    if (split) balance += (split.amount || 0);
-                } else if (isMember(expense.payerId)) {
-                    // They paid
-                    const split = expense.splits.find(s => isCurrentUser(s.userId));
-                    if (split) balance -= (split.amount || 0);
+             groupExpenses.forEach((expense) => {
+                if (matchesMember(expense.payerId, meRef)) {
+                    // I paid - find their split
+                    const split = findMemberSplit(expense.splits, themRef);
+                    if (split) {
+                        balance += (split.amount || 0);
+                    }
+                } else if (matchesMember(expense.payerId, themRef)) {
+                    // They paid - find my split
+                    const split = findMemberSplit(expense.splits, meRef);
+                    if (split) {
+                        balance -= (split.amount || 0);
+                    }
                 }
             });
-             groupTransactions.forEach(t => {
-                 if (isCurrentUser(t.fromId) && isMember(t.toId)) balance += t.amount;
-                 else if (isMember(t.fromId) && isCurrentUser(t.toId)) balance -= t.amount;
+             
+             groupTransactions.forEach((t) => {
+                 if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+                     balance += t.amount;
+                 } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+                     balance -= t.amount;
+                 }
              });
              
              const isSettled = Math.abs(balance) < 0.01;
@@ -116,6 +138,14 @@ export function GroupDetail() {
   }
 
   const groupExpenses = expenses.filter((e) => e.groupId === group.id)
+  const groupTransactions = transactions.filter((t) => t.groupId === group.id && !t.deleted)
+  
+  // Combined activity: expenses + transactions, sorted by date (newest first)
+  const groupActivity = [
+    ...groupExpenses.map(e => ({ type: 'expense' as const, data: e, date: new Date(e.date) })),
+    ...groupTransactions.map(t => ({ type: 'transaction' as const, data: t, date: new Date(t.date) }))
+  ].sort((a, b) => b.date.getTime() - a.date.getTime())
+
 
   const getMemberName = (id: string) => {
     if (id === currentUser.id) return "You"
@@ -205,43 +235,101 @@ export function GroupDetail() {
         )}
       </div>
 
-      {/* Expenses List */}
+      {/* Activity List (Expenses + Transactions) */}
       <div className="space-y-4 pb-24">
-          {groupExpenses.length === 0 ? (
+          {groupActivity.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Banknote className="h-12 w-12 mb-4 opacity-20" />
-                <p>No expenses yet.</p>
-                <p className="text-sm">Tap + to add one.</p>
+                <p>No activity yet.</p>
+                <p className="text-sm">Tap + to add an expense.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {groupExpenses.map((expense) => (
-                <Card 
-                  key={expense.id} 
-                  className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => navigate(`/expenses/${expense.id}`)}
-                >
-                  <div className="flex items-center p-4 gap-4">
-                    <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
-                      <Banknote className="h-5 w-5" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">
-                        {expense.description}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(expense.date).toLocaleDateString()} •{" "}
-                        {expense.payerId === currentUser.id
-                          ? "You paid"
-                          : `${getMemberName(expense.payerId)} paid`}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold">₹{expense.amount}</p>
-                    </div>
-                  </div>
-                </Card>
-              ))}
+              {groupActivity.map((item) => {
+                if (item.type === 'expense') {
+                  const expense = item.data;
+                  return (
+                    <Card 
+                      key={expense.id} 
+                      className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => navigate(`/expenses/${expense.id}`)}
+                    >
+                      <div className="flex items-center p-4 gap-4">
+                        <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                          <Banknote className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">
+                            {expense.description}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(expense.date).toLocaleDateString()} •{" "}
+                            {expense.payerId === currentUser.id
+                              ? "You paid"
+                              : `${getMemberName(expense.payerId)} paid`}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold">₹{expense.amount}</p>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                } else {
+                  const transaction = item.data;
+                  const isFromMe = transaction.fromId === currentUser.id;
+                  const isToMe = transaction.toId === currentUser.id;
+                  
+                  // Determine the display text based on who is involved
+                  let displayText: string;
+                  let amountClass: string;
+                  let amountPrefix: string;
+                  
+                  if (isFromMe) {
+                    // I paid someone
+                    displayText = `You paid ${getMemberName(transaction.toId)}`;
+                    amountClass = "text-red-500";
+                    amountPrefix = "-";
+                  } else if (isToMe) {
+                    // Someone paid me
+                    displayText = `${getMemberName(transaction.fromId)} paid you`;
+                    amountClass = "text-green-500";
+                    amountPrefix = "+";
+                  } else {
+                    // Third-party transaction - I'm not involved
+                    displayText = `${getMemberName(transaction.fromId)} paid ${getMemberName(transaction.toId)}`;
+                    amountClass = "text-muted-foreground";
+                    amountPrefix = "";
+                  }
+                  
+                  return (
+                    <Card 
+                      key={transaction.id} 
+                      className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => navigate(`/payments/${transaction.id}`)}
+                    >
+                      <div className="flex items-center p-4 gap-4">
+                        <div className="h-10 w-10 bg-green-500/10 rounded-full flex items-center justify-center text-green-600">
+                          <Wallet className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">
+                            {displayText}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(transaction.date).toLocaleDateString()} • Settle up
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className={cn("font-bold", amountClass)}>
+                            {amountPrefix}₹{transaction.amount}
+                          </p>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                }
+              })}
             </div>
           )}
       </div>
@@ -325,25 +413,49 @@ export function GroupDetail() {
                 {group.members.map(member => {
                     if (member.id === currentUser.id || member.userId === currentUser.id) return null;
                     
-                    // Simple balance calc for settle up (duplicate relative logic)
-                     let balance = 0;
-                     const isMember = (id: string) => id === member.id || (member.userId && id === member.userId);
-                     const isCurrentUser = (id: string) => id === currentUser.id;
+                    // FIX: Use proper member matching like Group Wall
+                    // Find current user's member record in the group to get their friend_id
+                    const myMemberRecord = group.members.find(
+                        (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+                    );
+                    
+                    let balance = 0;
+                    // Match member by friend_id or linked user_id
+                    const isMember = (id: string) => id === member.id || (member.userId && id === member.userId);
+                    // FIX: Match current user by BOTH friend_id (from group membership) AND global user_id
+                    const isCurrentUserMatch = (id: string) => 
+                        id === currentUser.id || (myMemberRecord && id === myMemberRecord.id);
 
-                     groupExpenses.forEach(expense => {
-                        if (isCurrentUser(expense.payerId)) {
+                     console.log('┌──────────────────────────────────────────────────────────────');
+                     console.log('│ [SETTLE-UP MODAL] Balance Calculation (FIXED)');
+                     console.log('│ Member:', member.name);
+                     console.log('│ Current User ID:', currentUser.id);
+                     console.log('│ My Member Record ID (friend_id):', myMemberRecord?.id);
+                     console.log('│ isMember checks: member.id=', member.id, ', member.userId=', member.userId);
+
+                     groupExpenses.forEach((expense, i) => {
+                        if (isCurrentUserMatch(expense.payerId)) {
                             const split = expense.splits.find(s => isMember(s.userId));
-                            if (split) balance += (split.amount || 0);
+                            if (split) {
+                                console.log(`│   [${i}] I paid, member split found: ₹${split.amount}`);
+                                balance += (split.amount || 0);
+                            }
                         } else if (isMember(expense.payerId)) {
-                            const split = expense.splits.find(s => isCurrentUser(s.userId));
-                            if (split) balance -= (split.amount || 0);
+                            const split = expense.splits.find(s => isCurrentUserMatch(s.userId));
+                            if (split) {
+                                console.log(`│   [${i}] Member paid, my split found: ₹${split.amount}`);
+                                balance -= (split.amount || 0);
+                            }
                         }
-                    });
-                     const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-                     groupTransactions.forEach((t:any) => {
-                         if (isCurrentUser(t.fromId) && isMember(t.toId)) balance += t.amount;
-                         else if (isMember(t.fromId) && isCurrentUser(t.toId)) balance -= t.amount;
                      });
+                      const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+                      groupTransactions.forEach((t:any) => {
+                          if (isCurrentUserMatch(t.fromId) && isMember(t.toId)) balance += t.amount;
+                          else if (isMember(t.fromId) && isCurrentUserMatch(t.toId)) balance -= t.amount;
+                      });
+
+                     console.log('│ SETTLE-UP BALANCE:', balance);
+                     console.log('└──────────────────────────────────────────────────────────────');
 
                      const isOwe = balance < 0;
                      const amount = Math.abs(balance).toFixed(2);

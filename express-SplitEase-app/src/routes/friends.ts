@@ -10,17 +10,73 @@ router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
   const userId = (req as any).user.id;
   
-  const { data, error } = await supabase
+  // 1. Get direct friends (owned by this user)
+  const { data: directFriends, error } = await supabase
     .from('friends')
     .select('*')
     .eq('owner_id', userId);
   
   if (error) return res.status(500).json({ error: error.message });
   
-  // Filter out the "Self" friend record (used for group membership but hidden in friends list)
-  const filteredData = data.filter((f: any) => f.linked_user_id !== userId);
+  // Filter out the "Self" friend record
+  const filteredDirectFriends = (directFriends || []).filter((f: any) => f.linked_user_id !== userId);
   
-  res.json(filteredData);
+  // 2. Get group members from groups current user is in (that have linked_user_id)
+  // First, find groups current user is a member of
+  const { data: userGroups } = await supabase
+    .from('group_members')
+    .select('group_id, friends!inner(linked_user_id)')
+    .eq('friends.linked_user_id', userId);
+  
+  const groupIds = (userGroups || []).map((g: any) => g.group_id);
+  
+  if (groupIds.length > 0) {
+    // Get all members from those groups (excluding self)
+    const { data: groupMembers } = await supabase
+      .from('group_members')
+      .select('friend_id, group_id, friends!inner(id, name, avatar, email, linked_user_id, balance, owner_id)')
+      .in('group_id', groupIds)
+      .not('friends.linked_user_id', 'is', null)
+      .neq('friends.linked_user_id', userId);
+    
+    // Create a set of linked_user_ids already in direct friends
+    const directLinkedIds = new Set(
+      filteredDirectFriends
+        .filter((f: any) => f.linked_user_id)
+        .map((f: any) => f.linked_user_id)
+    );
+    
+    // Add group members that aren't already direct friends
+    const additionalFriends: any[] = [];
+    const seenLinkedIds = new Set<string>();
+    
+    (groupMembers || []).forEach((gm: any) => {
+      const linkedId = gm.friends.linked_user_id;
+      if (linkedId && !directLinkedIds.has(linkedId) && !seenLinkedIds.has(linkedId)) {
+        seenLinkedIds.add(linkedId);
+        
+        // For group-only friends, set balance to 0
+        // Frontend will calculate correct pairwise balance from expenses/transactions
+        additionalFriends.push({
+          id: gm.friends.id,
+          name: gm.friends.name,
+          avatar: gm.friends.avatar,
+          email: gm.friends.email,
+          linked_user_id: linkedId,
+          balance: 0,
+          owner_id: null,
+          isGroupMemberOnly: true
+        });
+      }
+    });
+    
+    // Combine direct friends + group members
+    const allFriends = [...filteredDirectFriends, ...additionalFriends];
+    
+    return res.json(allFriends);
+  }
+  
+  res.json(filteredDirectFriends);
 });
 
 router.post('/', async (req, res) => {

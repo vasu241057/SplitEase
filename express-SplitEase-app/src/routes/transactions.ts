@@ -9,34 +9,35 @@ router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
-  // Join with friends table to get owner_id and linked_user_id
+  // Join with friends table to get linked_user_id
   const { data, error } = await supabase
     .from('transactions')
-    .select('*, friend:friends(owner_id, linked_user_id)');
+    .select('*, friend:friends(linked_user_id)');
   
   
   if (error) return res.status(500).json({ error: error.message });
   
   const formatted = data.map((t: any) => {
-    // Determine fromId and toId
+    // Determine fromId and toId based on created_by (who initiated the transaction)
     let fromId = '';
     let toId = '';
     
-    // Friend data
-    const ownerId = t.friend.owner_id;
-    const linkedId = t.friend.linked_user_id; // Might be null for local friend
+    // The person who created the transaction is one party
+    const creatorId = t.created_by;
+    // The other party is the friend (either their linked_user_id or friend_id)
+    const otherPartyId = t.friend.linked_user_id || t.friend_id;
     
     // Check if deleted
     const isDeleted = t.deleted || false;
     
     if (t.type === 'paid') {
-       // "I paid Friend": From Owner -> To Friend
-       fromId = ownerId;
-       toId = linkedId || t.friend_id; // Fallback to friend ID for local
+       // "Creator paid Friend": From Creator -> To Friend
+       fromId = creatorId || t.friend?.owner_id; // Fallback for old data
+       toId = otherPartyId;
     } else {
-       // "Friend paid Me": From Friend -> To Owner
-       fromId = linkedId || t.friend_id;
-       toId = ownerId;
+       // "Friend paid Creator": From Friend -> To Creator
+       fromId = otherPartyId;
+       toId = creatorId || t.friend?.owner_id; // Fallback for old data
     }
 
     return {
@@ -173,6 +174,36 @@ const notifyTransactionParticipants = async (
 router.post('/settle-up', async (req, res) => {
   const { friendId, amount, type, groupId } = req.body;
   const supabase = createSupabaseClient();
+  const userId = (req as any).user?.id;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // [FRIEND_BALANCE_DIAG] SETTLE-UP TRIGGER
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('╔═══════════════════════════════════════════════════════════════════');
+  console.log('║ [FRIEND_BALANCE_DIAG] SETTLE-UP INITIATED');
+  console.log('╠═══════════════════════════════════════════════════════════════════');
+  console.log('║ Trigger Type:', groupId ? 'GROUP SETTLE-UP' : 'NON-GROUP (PERSONAL) SETTLE-UP');
+  console.log('║ User ID (who triggered):', userId);
+  console.log('║ Friend ID (target):', friendId);
+  console.log('║ Amount:', amount);
+  console.log('║ Type:', type, type === 'paid' ? '(User paid Friend)' : '(Friend paid User)');
+  console.log('║ Group ID:', groupId || 'NULL (non-group)');
+  console.log('╠───────────────────────────────────────────────────────────────────');
+
+  // Fetch friend balance BEFORE transaction
+  const { data: friendBefore } = await supabase
+    .from('friends')
+    .select('id, name, balance, owner_id, linked_user_id')
+    .eq('id', friendId)
+    .single();
+  
+  console.log('║ [BEFORE] Friend Record:', friendBefore ? {
+    id: friendBefore.id,
+    name: friendBefore.name,
+    balance: friendBefore.balance,
+    owner_id: friendBefore.owner_id,
+    linked_user_id: friendBefore.linked_user_id
+  } : 'NOT FOUND');
 
   const { data, error } = await supabase
     .from('transactions')
@@ -182,27 +213,59 @@ router.post('/settle-up', async (req, res) => {
       type, // 'paid' or 'received'
       group_id: groupId || null,
       deleted: false,
-      date: new Date().toISOString()
+      date: new Date().toISOString(),
+      created_by: userId // Store who created the transaction for correct fromId/toId derivation
     }])
-    .select('*, friend:friends(owner_id, linked_user_id)')
+    .select('*, friend:friends(linked_user_id)')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.log('║ [ERROR] Transaction insert failed:', error.message);
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(500).json({ error: error.message });
+  }
+
+  console.log('║ Transaction Created:', { id: data.id, friend_id: data.friend_id, created_by: data.created_by });
+  console.log('╠───────────────────────────────────────────────────────────────────');
+  console.log('║ [CALLING] recalculateBalances()...');
 
   await recalculateBalances(supabase);
 
-  // Format return
+  // Fetch friend balance AFTER recalculation
+  const { data: friendAfter } = await supabase
+    .from('friends')
+    .select('id, name, balance, owner_id, linked_user_id')
+    .eq('id', friendId)
+    .single();
+  
+  console.log('║ [AFTER] Friend Record:', friendAfter ? {
+    id: friendAfter.id,
+    name: friendAfter.name,
+    balance: friendAfter.balance,
+    owner_id: friendAfter.owner_id,
+    linked_user_id: friendAfter.linked_user_id
+  } : 'NOT FOUND');
+
+  const balanceDelta = (friendAfter?.balance || 0) - (friendBefore?.balance || 0);
+  console.log('║ Balance Delta:', balanceDelta);
+  console.log('║ Expected Delta:', type === 'paid' ? `+${amount}` : `-${amount}`);
+  console.log('║ Delta Match?', Math.abs(balanceDelta - (type === 'paid' ? amount : -amount)) < 0.01 ? '✓ YES' : '⚠️ NO - INVESTIGATE!');
+  console.log('╚═══════════════════════════════════════════════════════════════════');
+
+  // Format return - use userId (created_by) not owner_id
   let fromId = '';
   let toId = '';
-  const ownerId = data.friend.owner_id;
   const linkedId = data.friend.linked_user_id;
+  const otherPartyId = linkedId || data.friend_id;
   
   if (type === 'paid') {
-     fromId = ownerId;
-     toId = linkedId || data.friend_id;
+     // Creator paid the friend
+     fromId = userId;
+     toId = otherPartyId;
   } else {
-     fromId = linkedId || data.friend_id;
-     toId = ownerId;
+     // Friend paid the creator
+     fromId = otherPartyId;
+     toId = userId;
   }
 
   const formatted = {

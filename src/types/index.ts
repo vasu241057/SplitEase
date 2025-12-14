@@ -22,6 +22,7 @@ export type Group = {
   name: string
   members: GroupMember[] 
   type: "trip" | "home" | "couple" | "other"
+  createdBy?: string // User ID of the group creator (admin)
 }
 
 export type SplitType = "equal" | "unequal" | "shares" | "percentage"

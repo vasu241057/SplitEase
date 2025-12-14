@@ -97,8 +97,20 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   })
 
   const settleUpMutation = useMutation({
-    mutationFn: (data: { friendId: string, amount: number, type: "paid" | "received", groupId?: string }) => api.post('/api/transactions/settle-up', data),
+    mutationFn: (data: { friendId: string, amount: number, type: "paid" | "received", groupId?: string }) => {
+      // [FRIEND_BALANCE_DIAG] Log settle-up call from frontend
+      console.log('╔═══════════════════════════════════════════════════════════════════');
+      console.log('║ [FRIEND_BALANCE_DIAG] SETTLE-UP CALLED FROM FRONTEND');
+      console.log('╠═══════════════════════════════════════════════════════════════════');
+      console.log('║ Friend ID:', data.friendId);
+      console.log('║ Amount:', data.amount);
+      console.log('║ Type:', data.type);
+      console.log('║ Group ID:', data.groupId || 'NULL (non-group settle-up)');
+      console.log('╚═══════════════════════════════════════════════════════════════════');
+      return api.post('/api/transactions/settle-up', data);
+    },
     onSuccess: () => {
+      console.log('[FRIEND_BALANCE_DIAG] Settle-up SUCCESS - Invalidating queries: transactions, friends');
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] })
     }

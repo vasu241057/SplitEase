@@ -88,7 +88,7 @@ export async function getGroupTransactionsWithParties(
 ): Promise<DerivedTransaction[]> {
   let query = supabase
     .from('transactions')
-    .select('*, friend:friends(owner_id, linked_user_id)')
+    .select('*, friend:friends(linked_user_id)')
     .eq('group_id', groupId);
 
   if (!includeDeleted) {
@@ -103,9 +103,33 @@ export async function getGroupTransactionsWithParties(
   }
 
   return (data || []).map((t: any) => {
-    const ownerId = t.friend?.owner_id || '';
+    // Use created_by for proper transaction direction derivation
+    const creatorId = t.created_by || '';
     const linkedId = t.friend?.linked_user_id || null;
-    return deriveTransactionParties(t, ownerId, linkedId);
+    const otherPartyId = linkedId || t.friend_id;
+    
+    let fromId: string;
+    let toId: string;
+    
+    if (t.type === 'paid') {
+      fromId = creatorId;
+      toId = otherPartyId;
+    } else {
+      fromId = otherPartyId;
+      toId = creatorId;
+    }
+    
+    return {
+      id: t.id,
+      friend_id: t.friend_id,
+      amount: t.amount,
+      type: t.type,
+      group_id: t.group_id || null,
+      deleted: t.deleted || false,
+      date: t.date || new Date().toISOString(),
+      fromId,
+      toId,
+    };
   });
 }
 

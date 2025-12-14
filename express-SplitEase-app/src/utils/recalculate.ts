@@ -17,11 +17,15 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
   const friendBalances = new Map<string, number>();
   // Map: `${ownerId}:${linkedUserId}` -> FriendID (For Global-Global lookup)
   const globalFriendLookup = new Map<string, string>();
+  // Map: FriendID -> LinkedUserId (For translating local friend to global user)
+  const friendIdToLinkedUser = new Map<string, string>();
 
   friendsData.forEach((f: any) => {
     friendBalances.set(f.id, 0);
     if (f.owner_id && f.linked_user_id) {
       globalFriendLookup.set(`${f.owner_id}:${f.linked_user_id}`, f.id);
+      // Store the mapping from friend_id to linked_user_id
+      friendIdToLinkedUser.set(f.id, f.linked_user_id);
     }
   });
 
@@ -63,7 +67,22 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     
     expense.splits.forEach((split: any) => {
       // Identity: Global User (user_id) or Local Friend (friend_id)
-      const personId = split.user_id || split.friend_id;
+      // FIX: If friend_id has a linked_user_id, use that for global routing
+      let personId = split.user_id;
+      
+      if (!personId && split.friend_id) {
+        // Check if this friend has a linked global user
+        const linkedUserId = friendIdToLinkedUser.get(split.friend_id);
+        if (linkedUserId) {
+          // Use the global user ID for proper Global-Global routing
+          personId = linkedUserId;
+          console.log(`[BALANCE_DEBUG] Translated friend_id ${split.friend_id} to linked_user_id ${linkedUserId}`);
+        } else {
+          // No linked user, use friend_id as local friend
+          personId = split.friend_id;
+        }
+      }
+      
       if (!personId) return;
 
       const cost = split.amount;
@@ -127,7 +146,7 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
   // 5. Apply Transactions (Settle Up)
   const { data: transactionsData, error: txError } = await supabase
     .from('transactions')
-    .select('*')
+    .select('*, friend:friends(owner_id, linked_user_id)')
     .in('type', ['paid', 'received'])
     .eq('deleted', false);
   if (txError) {
@@ -135,63 +154,101 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     throw txError;
   }
   
-  // Create quick lookup for Friend Details to find linked_user_id
+  // Create quick lookup for Friend Details
   const friendMap = new Map<string, { owner_id: string, linked_user_id: string | null, name: string }>();
   friendsData.forEach((f: any) => friendMap.set(f.id, f));
 
   transactionsData.forEach((tx: any) => {
-    // 1. Update Current Friend Record
-    const current = friendBalances.get(tx.friend_id) || 0;
+    // Use created_by to determine who initiated the transaction
+    const creatorId = tx.created_by || tx.friend?.owner_id;
+    const friendLinkedUserId = tx.friend?.linked_user_id;
+    const otherUserId = friendLinkedUserId || null;
     
-    // Log transaction processing
-    console.log(`[DEBUG] Processing TX ${tx.id} Type: ${tx.type} Amount: ${tx.amount} FriendID: ${tx.friend_id}`);
-
-    if (tx.type === 'paid') {
-      friendBalances.set(tx.friend_id, current + tx.amount);
-    } else {
-      friendBalances.set(tx.friend_id, current - tx.amount);
+    console.log(`[DEBUG] Processing TX ${tx.id} Type: ${tx.type} Amount: ${tx.amount} Creator: ${creatorId} Other: ${otherUserId || tx.friend_id}`);
+    
+    // Find the friend record where: creator owns it AND it links to the other user
+    // This gives us the correct friend record from the creator's perspective
+    const creatorFriendKey = otherUserId ? `${creatorId}:${otherUserId}` : null;
+    const creatorFriendId = creatorFriendKey ? globalFriendLookup.get(creatorFriendKey) : tx.friend_id;
+    
+    if (creatorFriendId) {
+      const current = friendBalances.get(creatorFriendId) || 0;
+      
+      // From creator's perspective:
+      // 'paid' = I paid them → balance increases (they owe me more / I owe less)
+      // 'received' = They paid me → balance decreases (they owe me less)
+      if (tx.type === 'paid') {
+        friendBalances.set(creatorFriendId, current + tx.amount);
+        console.log(`[DEBUG] Updated Creator's Friend ${creatorFriendId}: ${current} -> ${current + tx.amount}`);
+      } else {
+        friendBalances.set(creatorFriendId, current - tx.amount);
+        console.log(`[DEBUG] Updated Creator's Friend ${creatorFriendId}: ${current} -> ${current - tx.amount}`);
+      }
     }
+    
+    // Update inverse friend record (other user's view of creator)
+    if (otherUserId && creatorId) {
+      const inverseKey = `${otherUserId}:${creatorId}`;
+      const inverseFriendId = globalFriendLookup.get(inverseKey);
+      
+      if (inverseFriendId) {
+        const inverseCurrent = friendBalances.get(inverseFriendId) || 0;
+        
+        console.log(`[DEBUG] Found Inverse Friend Record! ID: ${inverseFriendId} (Key: ${inverseKey})`);
 
-    // 2. Update Inverse Friend Record (if Global User)
-    const friendInfo = friendMap.get(tx.friend_id);
-    if (friendInfo && friendInfo.owner_id && friendInfo.linked_user_id) {
-       // Find the Inverse Record: where Owner is the Linked User, and Linked User is the Owner
-       const inverseKey = `${friendInfo.linked_user_id}:${friendInfo.owner_id}`;
-       const inverseFriendId = globalFriendLookup.get(inverseKey);
-       
-       if (inverseFriendId) {
-          const inverseCurrent = friendBalances.get(inverseFriendId) || 0;
-          
-          console.log(`[DEBUG] Found Inverse Friend Record! ID: ${inverseFriendId} (Key: ${inverseKey})`);
-
-          // Apply OPPOSITE effect
-          // If A paid B (A->B +Amount), then B received from A (B->A -Amount)
-          if (tx.type === 'paid') {
-             friendBalances.set(inverseFriendId, inverseCurrent - tx.amount);
-             console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent - tx.amount}`);
-          } else {
-             friendBalances.set(inverseFriendId, inverseCurrent + tx.amount);
-             console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent + tx.amount}`);
-          }
-       } else {
-          console.warn(`[DEBUG] Inverse Friend Record NOT FOUND for Key: ${inverseKey}`);
-       }
+        // Apply OPPOSITE effect
+        // If creator paid other (type=paid), other's view: they received → balance decreases
+        // If creator received from other (type=received), other's view: they paid → balance increases
+        if (tx.type === 'paid') {
+           friendBalances.set(inverseFriendId, inverseCurrent - tx.amount);
+           console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent - tx.amount}`);
+        } else {
+           friendBalances.set(inverseFriendId, inverseCurrent + tx.amount);
+           console.log(`[DEBUG] Updated Inverse ${inverseFriendId}: ${inverseCurrent} -> ${inverseCurrent + tx.amount}`);
+        }
+      } else {
+        console.warn(`[DEBUG] Inverse Friend Record NOT FOUND for Key: ${inverseKey}`);
+      }
     }
   });
 
   // 6. DB Updates
-  console.log('[DEBUG] Updating Friend Balances...');
+  console.log('[BALANCE_DEBUG] ===== PERSISTING BALANCE UPDATES =====');
+  console.log('[BALANCE_DEBUG] Total friend records to update:', friendBalances.size);
+  
+  // First, fetch current balances for comparison
+  const friendIds = Array.from(friendBalances.keys());
+  const { data: currentBalancesData } = await supabase
+    .from('friends')
+    .select('id, owner_id, linked_user_id, balance, name')
+    .in('id', friendIds);
+  
+  const currentBalancesMap = new Map<string, any>();
+  currentBalancesData?.forEach((f: any) => currentBalancesMap.set(f.id, f));
+  
   const validUpdates = Array.from(friendBalances.entries()).map(async ([id, balance]) => {
-     // Optional: Round to 2 decimals
      const finalBalance = Math.round(balance * 100) / 100;
-     // Optimization: Only update if changed? 
-     // For now, update all to be safe.
-     // console.log(`[DEBUG] Setting Balance for Friend ${id} -> ${finalBalance}`);
+     const currentRecord = currentBalancesMap.get(id);
+     const oldBalance = currentRecord?.balance || 0;
+     const delta = finalBalance - oldBalance;
+     
+     // Log every balance change
+     console.log(`[BALANCE_DEBUG] Friend Update:`, {
+       friendId: id,
+       name: currentRecord?.name || 'unknown',
+       ownerId: currentRecord?.owner_id,
+       linkedUserId: currentRecord?.linked_user_id,
+       oldBalance: oldBalance,
+       newBalance: finalBalance,
+       delta: delta,
+       changed: Math.abs(delta) > 0.001
+     });
+     
      await supabase.from('friends').update({ balance: finalBalance }).eq('id', id);
   });
   
   await Promise.all(validUpdates);
-  console.log('[DEBUG] Recalculate Complete.');
+  console.log('[BALANCE_DEBUG] ===== BALANCE PERSISTENCE COMPLETE =====');
 };
 
 // Helper to routing debt updates

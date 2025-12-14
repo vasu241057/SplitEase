@@ -194,6 +194,21 @@ router.post('/', async (req, res) => {
   // === END validation ===
 
   
+  const creatorUserId = (req as any).user?.id;
+  
+  // ===== DEBUG LOG: Expense Creation Start =====
+  console.log('[BALANCE_DEBUG] ===== EXPENSE CREATION START =====');
+  console.log('[BALANCE_DEBUG] Creator User ID:', creatorUserId);
+  console.log('[BALANCE_DEBUG] Expense Details:', {
+    description,
+    amount,
+    date,
+    payerId,
+    groupId,
+    splitsCount: splits?.length
+  });
+  console.log('[BALANCE_DEBUG] Splits to be created:', JSON.stringify(splits, null, 2));
+  
   const { data: expense, error: expenseError } = await supabase
     .from('expenses')
     .insert([{
@@ -210,6 +225,15 @@ router.post('/', async (req, res) => {
 
   if (expenseError) return res.status(500).json({ error: expenseError.message });
 
+  console.log('[BALANCE_DEBUG] Expense created with ID:', expense.id);
+  console.log('[BALANCE_DEBUG] Expense DB record:', {
+    id: expense.id,
+    payer_id: expense.payer_id,
+    payer_user_id: expense.payer_user_id,
+    group_id: expense.group_id,
+    amount: expense.amount
+  });
+
   const splitInserts = await Promise.all(splits.map(async (s: any) => ({
     expense_id: expense.id,
     friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
@@ -219,17 +243,25 @@ router.post('/', async (req, res) => {
     paid: s.paid || false
   })));
 
+  console.log('[BALANCE_DEBUG] Split inserts prepared:', JSON.stringify(splitInserts, null, 2));
+
   const { error: splitError } = await supabase
     .from('expense_splits')
     .insert(splitInserts);
 
   if (splitError) return res.status(500).json({ error: splitError.message });
 
+  console.log('[BALANCE_DEBUG] Splits inserted successfully');
+  console.log('[BALANCE_DEBUG] ===== TRIGGERING RECALCULATE BALANCES =====');
+
   try {
     await recalculateBalances(supabase);
+    console.log('[BALANCE_DEBUG] RecalculateBalances completed successfully');
   } catch (e: any) {
-     // console.error('Error recalculating balances:', e); 
+     console.error('[BALANCE_DEBUG] Error in recalculateBalances:', e); 
   }
+  
+  console.log('[BALANCE_DEBUG] ===== EXPENSE CREATION END =====');
 
   const newExpense = {
     ...expense,

@@ -89,13 +89,18 @@ export function TransactionDetail() {
     }
   }
 
-  // Determine Friend Name
-  // If fromId is me, friend is toId. If toId is me, friend is fromId.
-  const friendId = transaction.fromId === currentUser.id ? transaction.toId : transaction.fromId
-  const friend = friends.find(f => f.id === friendId || f.linked_user_id === friendId)
-  const friendName = friend ? friend.name : "Unknown Friend"
-
+  // Determine Payer and Payee names
+  // Handle 3 cases: I paid, someone paid me, or I'm viewing a third-party transaction
   const isPayerMe = transaction.fromId === currentUser.id
+  const isPayeeMe = transaction.toId === currentUser.id
+  
+  // Find the payer's name
+  const payerFriend = friends.find(f => f.id === transaction.fromId || f.linked_user_id === transaction.fromId)
+  const payerName = isPayerMe ? "You" : (payerFriend?.name || "Unknown")
+  
+  // Find the payee's name
+  const payeeFriend = friends.find(f => f.id === transaction.toId || f.linked_user_id === transaction.toId)
+  const payeeName = isPayeeMe ? "You" : (payeeFriend?.name || "Unknown")
 
   return (
     <div className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 z-40 bg-background flex flex-col">
@@ -156,7 +161,7 @@ export function TransactionDetail() {
                     <User className="h-5 w-5 text-muted-foreground" />
                     <div className="flex-1">
                         <p className="text-sm text-muted-foreground">Paid by</p>
-                        <p className="font-medium">{isPayerMe ? "You" : friendName}</p>
+                        <p className="font-medium">{payerName}</p>
                     </div>
                 </div>
                 
@@ -164,7 +169,7 @@ export function TransactionDetail() {
                     <User className="h-5 w-5 text-muted-foreground" />
                     <div className="flex-1">
                         <p className="text-sm text-muted-foreground">Paid to</p>
-                        <p className="font-medium">{isPayerMe ? friendName : "You"}</p>
+                        <p className="font-medium">{payeeName}</p>
                     </div>
                 </div>
 
