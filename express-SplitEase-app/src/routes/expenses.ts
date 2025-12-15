@@ -218,7 +218,8 @@ router.post('/', async (req, res) => {
       payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
       payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
       group_id: groupId,
-      deleted: false
+      deleted: false,
+      created_by: creatorUserId  // Track who added the expense
     }])
     .select()
     .single();

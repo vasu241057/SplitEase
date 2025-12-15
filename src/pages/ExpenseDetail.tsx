@@ -211,9 +211,14 @@ export function ExpenseDetail() {
              </div>
           </div>
           
-          <div className="text-sm text-muted-foreground flex items-center gap-2">
-             <Calendar className="h-4 w-4" />
-             Added on {new Date(expense.date).toLocaleDateString()}
+          <div className="text-sm text-muted-foreground space-y-1">
+             <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Added on {new Date(expense.date).toLocaleDateString()} at {new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {expense.created_by && (
+                  <span> by {getMemberName(expense.created_by)}</span>
+                )}
+             </div>
           </div>
 
           <Card className="p-4 space-y-4">
