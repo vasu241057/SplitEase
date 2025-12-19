@@ -45,11 +45,22 @@ export function Friends() {
     localStorage.setItem(NOTIF_BANNER_DISMISSED_KEY, "true")
   }
   
-  const totalOwed = friendsWithEffectiveBalance
+  // Filter for display:
+  // 1. Always show explicit friends (isGroupMemberOnly false/undefined)
+  // 2. Show group-only friends ONLY if they have a non-zero balance
+  const visibleFriends = useMemo(() => {
+    return friendsWithEffectiveBalance.filter(friend => {
+      const isGroupMemberOnly = (friend as any).isGroupMemberOnly;
+      if (!isGroupMemberOnly) return true;
+      return Math.abs(friend.balance) > 0.01;
+    });
+  }, [friendsWithEffectiveBalance]);
+
+  const totalOwed = visibleFriends
     .filter((f) => f.balance > 0)
     .reduce((acc, curr) => acc + curr.balance, 0)
 
-  const totalOwe = friendsWithEffectiveBalance
+  const totalOwe = visibleFriends
     .filter((f) => f.balance < 0)
     .reduce((acc, curr) => acc + Math.abs(curr.balance), 0)
 
@@ -117,12 +128,12 @@ export function Friends() {
                </div>
              </Card>
            ))
-        ) : friendsWithEffectiveBalance.length === 0 ? (
+        ) : visibleFriends.length === 0 ? (
           <p className="text-muted-foreground text-center py-8">
             You haven't added any friends yet.
           </p>
         ) : (
-          friendsWithEffectiveBalance.map((friend) => (
+          visibleFriends.map((friend) => (
             <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
                 <div className="flex items-start gap-4">
