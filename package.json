@@ -15,7 +15,7 @@
     "test:backend": "npm run test --prefix express-SplitEase-app",
     "test:all": "npm run lint && npm run test && npm run test:backend",
     "go": "concurrently \"npm run dev\" \"npm run dev --prefix express-SplitEase-app\"",
-    "prepare": "husky"
+    "prepare": "node -e \"if (!process.env.CI && !process.env.VERCEL) require('husky')()\" || true"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
