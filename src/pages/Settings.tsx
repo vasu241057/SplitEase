@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2, QrCode } from "lucide-react"
 import { useTheme } from "../context/ThemeContext"
 import { useAuth } from "../context/AuthContext"
@@ -34,6 +34,48 @@ export function Settings() {
   const [loading, setLoading] = useState(false)
   const [notifLoading, setNotifLoading] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
+  const [notifStatus, setNotifStatus] = useState<'enabled' | 'disabled' | 'loading'>('loading')
+  const [showNotifModal, setShowNotifModal] = useState(false)
+  const [notifModalState, setNotifModalState] = useState<'prompt' | 'success' | 'denied' | 'blocked'>('prompt')
+
+  // Check notification status on mount
+  useEffect(() => {
+    checkNotificationStatus();
+  }, []);
+
+  async function checkNotificationStatus() {
+    try {
+      if (!('Notification' in window)) {
+        setNotifStatus('disabled');
+        return;
+      }
+
+      if (Notification.permission === 'denied') {
+        setNotifStatus('disabled');
+        return;
+      }
+
+      if (Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          // Verify with backend
+          try {
+            const data = await api.get('/api/notifications/status');
+            setNotifStatus(data?.enabled ? 'enabled' : 'disabled');
+          } catch {
+            setNotifStatus('disabled');
+          }
+        } else {
+          setNotifStatus('disabled');
+        }
+      } else {
+        setNotifStatus('disabled');
+      }
+    } catch {
+      setNotifStatus('disabled');
+    }
+  }
 
   const handleLogout = async () => {
     try {
@@ -48,9 +90,8 @@ export function Settings() {
     setLoading(true)
     try {
       await api.put('/user/profile', { full_name: newName })
-      // Ideally update local user context here, but for now reload or rely on re-fetch
       setIsEditing(false)
-      window.location.reload() // Simple way to refresh user data
+      window.location.reload()
     } catch (error) {
       console.error("Failed to update name", error)
       alert("Failed to update name")
@@ -59,23 +100,36 @@ export function Settings() {
     }
   }
 
+  const handleNotificationClick = () => {
+    if (notifStatus === 'enabled') {
+      // Already enabled, maybe show info or do nothing
+      return;
+    }
+    
+    if (Notification.permission === 'denied') {
+      setNotifModalState('blocked');
+      setShowNotifModal(true);
+      return;
+    }
+    
+    setNotifModalState('prompt');
+    setShowNotifModal(true);
+  }
+
   const handleEnableNotifications = async () => {
     if (!('serviceWorker' in navigator)) {
-        console.error("Service Worker not supported");
-        alert("Service Worker not supported in this browser");
+        setNotifModalState('denied');
         return;
     }
     setNotifLoading(true);
     try {
-        console.log("Requesting notification permission...");
         const permission = await Notification.requestPermission();
-        console.log("Permission status:", permission);
 
         if (permission === 'granted') {
             const registration = await navigator.serviceWorker.ready;
 
             if (!registration.pushManager) {
-                throw new Error("Push Manager not available in this browser/context");
+                throw new Error("Push Manager not available");
             }
 
             const convertedKey = urlBase64ToUint8Array(PUBLIC_VAPID_KEY);
@@ -86,14 +140,16 @@ export function Settings() {
 
             await api.post('/api/notifications/subscribe', { subscription });
             
-            alert("Notifications enabled successfully!");
+            setNotifStatus('enabled');
+            setNotifModalState('success');
+        } else if (permission === 'denied') {
+            setNotifModalState('blocked');
         } else {
-            console.warn("Permission denied by user");
-            alert("Permission denied. Please enable notifications in your browser settings.");
+            setNotifModalState('denied');
         }
     } catch (error: any) {
-        console.error("Failed to enable notifications full error:", error);
-        alert(`Failed to enable notifications: ${error.name} - ${error.message}`);
+        console.error("Failed to enable notifications:", error);
+        setNotifModalState('denied');
     } finally {
         setNotifLoading(false);
     }
@@ -186,14 +242,26 @@ export function Settings() {
              <Button variant="ghost" size="sm">Scan</Button>
            </div>
 
-          <div className="flex items-center justify-between p-4">
+          <div 
+            className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors" 
+            onClick={handleNotificationClick}
+          >
              <div className="flex items-center gap-3">
                <Bell className="h-5 w-5 text-muted-foreground" />
                <span className="font-medium">Notifications</span>
+               {notifStatus === 'loading' && (
+                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+               )}
+               {notifStatus === 'enabled' && (
+                 <span className="h-2.5 w-2.5 rounded-full bg-green-500" title="Enabled" />
+               )}
+               {notifStatus === 'disabled' && (
+                 <span className="h-2.5 w-2.5 rounded-full bg-red-500" title="Disabled" />
+               )}
              </div>
-             <Button variant="outline" size="sm" onClick={handleEnableNotifications} disabled={notifLoading}>
-                {notifLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enable"}
-             </Button>
+             <span className="text-sm text-muted-foreground">
+               {notifStatus === 'enabled' ? 'Enabled' : notifStatus === 'disabled' ? 'Tap to enable' : ''}
+             </span>
           </div>
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-3">
@@ -291,6 +359,77 @@ export function Settings() {
                             <p className="text-sm text-muted-foreground">{scanMessage}</p>
                         </div>
                         <Button variant="outline" className="w-full" onClick={closeScanResult}>Close</Button>
+                    </>
+                )}
+            </Card>
+        </div>
+      )}
+
+      {/* Notification Modal */}
+      {showNotifModal && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+            <Card className="max-w-xs w-full p-6 flex flex-col items-center gap-4 text-center animate-in fade-in zoom-in-95 duration-200">
+                {notifModalState === 'prompt' && (
+                    <>
+                        <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
+                            <Bell className="h-6 w-6 text-blue-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Enable Notifications?</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Stay updated when friends add expenses or settle up.
+                            </p>
+                        </div>
+                        <div className="flex gap-2 w-full">
+                            <Button variant="outline" className="flex-1" onClick={() => setShowNotifModal(false)}>
+                              Not Now
+                            </Button>
+                            <Button className="flex-1" onClick={handleEnableNotifications} disabled={notifLoading}>
+                              {notifLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enable"}
+                            </Button>
+                        </div>
+                    </>
+                )}
+                {notifModalState === 'success' && (
+                    <>
+                        <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+                            <Check className="h-6 w-6 text-green-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Notifications Enabled!</h3>
+                            <p className="text-sm text-muted-foreground">
+                              You'll now receive updates about expenses and settlements.
+                            </p>
+                        </div>
+                        <Button className="w-full" onClick={() => setShowNotifModal(false)}>Done</Button>
+                    </>
+                )}
+                {notifModalState === 'denied' && (
+                    <>
+                        <div className="h-12 w-12 rounded-full bg-yellow-100 flex items-center justify-center">
+                            <Bell className="h-6 w-6 text-yellow-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Permission Required</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Please allow notifications when prompted to receive updates.
+                            </p>
+                        </div>
+                        <Button variant="outline" className="w-full" onClick={() => setShowNotifModal(false)}>Close</Button>
+                    </>
+                )}
+                {notifModalState === 'blocked' && (
+                    <>
+                        <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                            <X className="h-6 w-6 text-red-600" />
+                        </div>
+                        <div className="space-y-1">
+                            <h3 className="font-bold text-lg">Notifications Blocked</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Notifications are blocked by your browser. To enable, go to browser settings → Site Settings → Notifications → Allow.
+                            </p>
+                        </div>
+                        <Button variant="outline" className="w-full" onClick={() => setShowNotifModal(false)}>OK</Button>
                     </>
                 )}
             </Card>
