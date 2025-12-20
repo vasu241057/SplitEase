@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 
 // Polyfills for Radix UI and standard browser APIs missing in JSDOM
 class ResizeObserver {

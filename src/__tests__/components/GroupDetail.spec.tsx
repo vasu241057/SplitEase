@@ -1,9 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { GroupDetail } from '../../pages/GroupDetail';
-import { AuthProvider } from '../../context/AuthContext';
-import { DataProvider } from '../../context/DataContext';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 
 // -----------------------------------------------------
 // MOCKS

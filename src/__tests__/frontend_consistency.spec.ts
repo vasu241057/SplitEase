@@ -28,8 +28,8 @@ describe('Frontend Balance Consistency', () => {
             date: new Date().toISOString(),
             payerId: 'user_A',
             splits: [
-                { userId: 'user_A', amount: 50, paidAmount: 60 },
-                { userId: 'user_B', amount: 50, paidAmount: 40 }
+                { userId: 'user_A', amount: 50, paidAmount: 60, paid: false },
+                { userId: 'user_B', amount: 50, paidAmount: 40, paid: false }
             ],
             deleted: false,
             created_by: 'user_A'
@@ -45,8 +45,8 @@ describe('Frontend Balance Consistency', () => {
         it('balanceBreakdown calculates IDENTICAL debt for same inputs', () => {
             // We need to construct the environment for getFriendBalanceBreakdown
             const group = { id: 'g1', name: 'G1', type: 'trip' as const, members: [
-                { id: 'user_A', userId: 'user_A', name: 'Me' },
-                { id: 'friend_B', userId: 'user_B', name: 'Friend B' }
+                { id: 'user_A', userId: 'user_A', name: 'Me', avatar: '' },
+                { id: 'friend_B', userId: 'user_B', name: 'Friend B', avatar: '' }
             ]};
 
             const breakdown = getFriendBalanceBreakdown(
@@ -98,15 +98,15 @@ describe('Frontend Balance Consistency', () => {
             
             const exp1 = {
                 id: 'exp1', groupId: 'g1', description: 'Penny', amount: 33.33, date: new Date().toISOString(), payerId: 'user_A',
-                splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33 }, { userId: 'user_B', amount: 33.33, paidAmount: 0 }],
+                splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33, paid: false }, { userId: 'user_B', amount: 33.33, paidAmount: 0, paid: false }],
                 deleted: false, created_by: 'user_A'
             };
-            const exp2 = { ...exp1, id: 'exp2', splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33 }, { userId: 'user_B', amount: 33.33, paidAmount: 0 }] };
-            const exp3 = { ...exp1, id: 'exp3', splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33 }, { userId: 'user_B', amount: 33.33, paidAmount: 0 }] };
+            const exp2 = { ...exp1, id: 'exp2', splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33, paid: false }, { userId: 'user_B', amount: 33.33, paidAmount: 0, paid: false }] };
+            const exp3 = { ...exp1, id: 'exp3', splits: [{ userId: 'user_A', amount: 0, paidAmount: 33.33, paid: false }, { userId: 'user_B', amount: 33.33, paidAmount: 0, paid: false }] };
 
             const group = { id: 'g1', name: 'G1', type: 'trip' as const, members: [
-                { id: 'user_A', userId: 'user_A', name: 'Me' },
-                { id: 'friend_B', userId: 'user_B', name: 'Friend B' }
+                { id: 'user_A', userId: 'user_A', name: 'Me', avatar: '' },
+                { id: 'friend_B', userId: 'user_B', name: 'Friend B', avatar: '' }
             ]};
 
             const breakdown = getFriendBalanceBreakdown(mockFriend, mockUser, [group], [exp1, exp2, exp3], []);
@@ -134,8 +134,8 @@ describe('Frontend Balance Consistency', () => {
              const validExpense = {
                  ...expense,
                  splits: [
-                     { userId: 'user_A', amount: 50, paidAmount: 100 }, 
-                     { userId: 'user_B', amount: 50, paidAmount: 0 }
+                     { userId: 'user_A', amount: 50, paidAmount: 100, paid: false }, 
+                     { userId: 'user_B', amount: 50, paidAmount: 0, paid: false }
                  ]
              };
 
@@ -144,8 +144,8 @@ describe('Frontend Balance Consistency', () => {
              };
 
              const group = { id: 'g1', name: 'G1', type: 'trip' as const, members: [
-                { id: 'user_A', userId: 'user_A', name: 'Me' },
-                { id: 'friend_B', userId: 'user_B', name: 'Friend B' } // Friend B has member ID 'friend_B'
+                { id: 'user_A', userId: 'user_A', name: 'Me', avatar: '' },
+                { id: 'friend_B', userId: 'user_B', name: 'Friend B', avatar: '' } // Friend B has member ID 'friend_B'
              ]};
 
              // 1. Check Group Balance Logic (simulate useGroupBalance loop)
