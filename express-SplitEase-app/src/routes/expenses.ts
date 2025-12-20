@@ -191,6 +191,13 @@ router.post('/', async (req, res) => {
       error: `Split amounts (${splitSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
     });
   }
+  // 5. Sum of paid amounts must equal expense amount
+  const paidSum = splits.reduce((sum: number, s: any) => sum + (s.paidAmount || 0), 0);
+  if (Math.abs(paidSum - amount) > TOLERANCE) {
+    return res.status(400).json({ 
+      error: `Total paid amount (${paidSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
+    });
+  }
   // === END validation ===
 
   
@@ -311,6 +318,13 @@ router.put('/:id', async (req, res) => {
   if (Math.abs(splitSum - amount) > TOLERANCE) {
     return res.status(400).json({ 
       error: `Split amounts (${splitSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
+    });
+  }
+  // 5. Sum of paid amounts must equal expense amount
+  const paidSum = splits.reduce((sum: number, s: any) => sum + (s.paidAmount || 0), 0);
+  if (Math.abs(paidSum - amount) > TOLERANCE) {
+    return res.status(400).json({ 
+      error: `Total paid amount (${paidSum.toFixed(2)}) must equal expense amount (${amount.toFixed(2)}).` 
     });
   }
   // === END validation ===

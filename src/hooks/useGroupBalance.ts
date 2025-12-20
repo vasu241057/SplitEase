@@ -4,7 +4,7 @@ import {
   calculateExpenseBalance, 
   calculateTransactionBalance,
   matchesMember,
-  findMemberSplit,
+  calculatePairwiseExpenseDebt,
   type GroupMember 
 } from "../utils/groupBalanceUtils";
 
@@ -30,7 +30,7 @@ export function useGroupBalance(group: any) {
             // Calculate balance from expenses using unified utility
             groupExpenses.forEach((expense) => {
                 const expenseEffect = calculateExpenseBalance(expense, memberRef);
-                balance += expenseEffect;
+                balance += expenseEffect;   
             });
             
             // Calculate balance from transactions
@@ -74,15 +74,8 @@ export function useGroupBalance(group: any) {
             
             // Calculate pairwise expense balance
             groupExpenses.forEach((expense) => {
-                if (matchesMember(expense.payerId, memberRef)) {
-                    // This member paid - find other's split
-                    const split = findMemberSplit(expense.splits, otherRef);
-                    if (split) pairwiseBalance += (split.amount || 0);
-                } else if (matchesMember(expense.payerId, otherRef)) {
-                    // Other member paid - find this member's split
-                    const split = findMemberSplit(expense.splits, memberRef);
-                    if (split) pairwiseBalance -= (split.amount || 0);
-                }
+                const expenseEffect = calculatePairwiseExpenseDebt(expense, memberRef, otherRef);
+                pairwiseBalance += expenseEffect;
             });
             
             // Calculate pairwise transaction balance

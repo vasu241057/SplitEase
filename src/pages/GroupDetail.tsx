@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
-import { matchesMember, findMemberSplit, type GroupMember } from "../utils/groupBalanceUtils"
+import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "../utils/groupBalanceUtils"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -93,20 +93,9 @@ export function GroupDetail() {
             let balance = 0;
 
              groupExpenses.forEach((expense) => {
-                if (matchesMember(expense.payerId, meRef)) {
-                    // I paid - find their split
-                    const split = findMemberSplit(expense.splits, themRef);
-                    if (split) {
-                        balance += (split.amount || 0);
-                    }
-                } else if (matchesMember(expense.payerId, themRef)) {
-                    // They paid - find my split
-                    const split = findMemberSplit(expense.splits, meRef);
-                    if (split) {
-                        balance -= (split.amount || 0);
-                    }
-                }
-            });
+                 const expenseEffect = calculatePairwiseExpenseDebt(expense, meRef, themRef);
+                 balance += expenseEffect;
+             });
              
              groupTransactions.forEach((t) => {
                  if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
@@ -420,11 +409,7 @@ export function GroupDetail() {
                     );
                     
                     let balance = 0;
-                    // Match member by friend_id or linked user_id
-                    const isMember = (id: string) => id === member.id || (member.userId && id === member.userId);
-                    // FIX: Match current user by BOTH friend_id (from group membership) AND global user_id
-                    const isCurrentUserMatch = (id: string) => 
-                        id === currentUser.id || (myMemberRecord && id === myMemberRecord.id);
+
 
                      console.log('┌──────────────────────────────────────────────────────────────');
                      console.log('│ [SETTLE-UP MODAL] Balance Calculation (FIXED)');
@@ -433,25 +418,31 @@ export function GroupDetail() {
                      console.log('│ My Member Record ID (friend_id):', myMemberRecord?.id);
                      console.log('│ isMember checks: member.id=', member.id, ', member.userId=', member.userId);
 
-                     groupExpenses.forEach((expense, i) => {
-                        if (isCurrentUserMatch(expense.payerId)) {
-                            const split = expense.splits.find(s => isMember(s.userId));
-                            if (split) {
-                                console.log(`│   [${i}] I paid, member split found: ₹${split.amount}`);
-                                balance += (split.amount || 0);
-                            }
-                        } else if (isMember(expense.payerId)) {
-                            const split = expense.splits.find(s => isCurrentUserMatch(s.userId));
-                            if (split) {
-                                console.log(`│   [${i}] Member paid, my split found: ₹${split.amount}`);
-                                balance -= (split.amount || 0);
-                            }
-                        }
+                     const meRef: GroupMember = {
+                        id: myMemberRecord?.id || currentUser.id,
+                        userId: currentUser.id
+                     };
+                     
+                     groupExpenses.forEach((expense) => {
+                        const expenseEffect = calculatePairwiseExpenseDebt(
+                            expense,
+                            meRef, // ME
+                            { id: member.id, userId: member.userId ?? undefined } // THEM
+                        );
+                        balance += expenseEffect;
                      });
                       const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-                      groupTransactions.forEach((t:any) => {
-                          if (isCurrentUserMatch(t.fromId) && isMember(t.toId)) balance += t.amount;
-                          else if (isMember(t.fromId) && isCurrentUserMatch(t.toId)) balance -= t.amount;
+                      groupTransactions.forEach((t: any) => {
+                          // Clean use of matchesMember via unified object
+                          // ME -> THEM: I paid (positive balance for me if I am creditor? Wait.)
+                          // Logic: if I paid, balance += amount (They owe Me)
+                          const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
+                          
+                          if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+                              balance += t.amount;
+                          } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+                              balance -= t.amount;
+                          }
                       });
 
                      console.log('│ SETTLE-UP BALANCE:', balance);

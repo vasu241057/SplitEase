@@ -1,6 +1,7 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { getGroupTransactionsWithParties, applyTransactionsToNetBalances, BALANCE_TOLERANCE } from '../utils/transactionHelpers';
+import { getGroupTransactionsWithParties, applyTransactionsToNetBalances } from '../utils/transactionHelpers';
+import { calculatePairwiseExpenseDebt, BALANCE_TOLERANCE } from '../utils/balanceUtils';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -250,23 +251,16 @@ router.delete('/:id/members/:friendId', async (req, res) => {
         
         let pairwiseBalance = 0;
         
-        // Calculate pairwise expense balance
+        // Calculate pairwise expense balance using shared utility
         expenses?.forEach((expense: any) => {
-            const payerId = expense.payer_user_id || expense.payer_id;
-            
-            if (matchesMember(payerId)) {
-                // This member paid - find other's split (check both user_id and friend_id)
-                const split = expense.expense_splits?.find((s: any) => 
-                    matchesOther(s.user_id) || matchesOther(s.friend_id)
-                );
-                if (split) pairwiseBalance += parseFloat(split.amount) || 0;
-            } else if (matchesOther(payerId)) {
-                // Other member paid - find this member's split
-                const split = expense.expense_splits?.find((s: any) => 
-                    matchesMember(s.user_id) || matchesMember(s.friend_id)
-                );
-                if (split) pairwiseBalance -= parseFloat(split.amount) || 0;
-            }
+            const expenseEffect = calculatePairwiseExpenseDebt(
+                expense, 
+                friendId, // Me (User to remove)
+                otherMember.friend_id, // Them (Other member)
+                linkedUserId,      // My Linked User ID
+                otherLinkedUserId  // Their Linked User ID
+            );
+            pairwiseBalance += expenseEffect;
         });
         
         // Calculate pairwise transaction balance
@@ -382,19 +376,14 @@ router.post('/:id/leave', async (req, res) => {
         let pairwiseBalance = 0;
         
         expenses?.forEach((expense: any) => {
-            const payerId = expense.payer_user_id || expense.payer_id;
-            
-            if (matchesMe(payerId)) {
-                const split = expense.expense_splits?.find((s: any) => 
-                    matchesOther(s.user_id) || matchesOther(s.friend_id)
-                );
-                if (split) pairwiseBalance += parseFloat(split.amount) || 0;
-            } else if (matchesOther(payerId)) {
-                const split = expense.expense_splits?.find((s: any) => 
-                    matchesMe(s.user_id) || matchesMe(s.friend_id)
-                );
-                if (split) pairwiseBalance -= parseFloat(split.amount) || 0;
-            }
+            const expenseEffect = calculatePairwiseExpenseDebt(
+                expense,
+                userId, // Me (User leaving) - pass UserId first as it's the primary identity here
+                (otherMember.friends as any)?.linked_user_id || otherMember.friend_id, // Them (User ID preferred, else Friend ID)
+                memberFriendId, // My Friend ID alias
+                otherMember.friend_id // Their Friend ID alias
+            );
+            pairwiseBalance += expenseEffect;
         });
         
         derivedTransactions.forEach((t) => {
@@ -448,15 +437,12 @@ router.delete('/:id', async (req, res) => {
   const balances: Record<string, number> = {};
 
   expenses?.forEach((expense: any) => {
-     // Payer credit - use payer_user_id if available, fallback to payer_id
-     const payerId = expense.payer_user_id || expense.payer_id;
-     if (payerId) {
-       balances[payerId] = (balances[payerId] || 0) + expense.amount;
-     }
-     // Split debit
      expense.expense_splits.forEach((split: any) => {
-         if (split.user_id) {
-             balances[split.user_id] = (balances[split.user_id] || 0) - split.amount;
+         const uid = split.user_id || split.friend_id;
+         if (uid) {
+             const paid = parseFloat(split.paid_amount || '0');
+             const share = parseFloat(split.amount || '0');
+             balances[uid] = (balances[uid] || 0) + (paid - share);
          }
      });
   });

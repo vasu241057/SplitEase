@@ -111,3 +111,82 @@ export function calculateTransactionBalance(
   if (isTo) return -tx.amount;    // Member received, increases their debt
   return 0;
 }
+
+/**
+ * Calculate the precise pairwise transfer amount between two members for a specific expense.
+ * Implements the "Simplify Debt" algorithm per expense to handle multi-payer correctly.
+ * 
+ * Returns:
+ *  > 0: 'them' owes 'me' (positive)
+ *  < 0: 'me' owes 'them' (negative)
+ *  0: No debt between these two
+ */
+export function calculatePairwiseExpenseDebt(
+  expense: {
+    splits: Array<{ userId?: string; amount?: number; paidAmount?: number }>;
+  },
+  me: GroupMember,
+  them: GroupMember
+): number {
+  // 1. Calculate Net Balances for everyone in the expense
+  const nets = new Map<string, number>();
+  
+  expense.splits.forEach(s => {
+    const uid = s.userId;
+    if (!uid) return;
+    const paid = (s.paidAmount || 0);
+    const cost = (s.amount || 0);
+    const current = nets.get(uid) || 0;
+    nets.set(uid, current + (paid - cost));
+  });
+
+  // 2. Separate into Debtors and Creditors
+  const debtors: {id: string, amount: number}[] = [];
+  const creditors: {id: string, amount: number}[] = [];
+
+  nets.forEach((amount, id) => {
+    if (amount < -0.01) debtors.push({ id, amount });
+    if (amount > 0.01) creditors.push({ id, amount });
+  });
+
+  // 3. Sort (Match Backend: Debtors Asc, Creditors Desc)
+  debtors.sort((a, b) => a.amount - b.amount);
+  creditors.sort((a, b) => b.amount - a.amount);
+
+  // 4. Resolve Transfers specific to Me <-> Them
+  let balanceDelta = 0; // +ve means Them owes Me.
+
+  let i = 0;
+  let j = 0;
+  
+  while (i < debtors.length && j < creditors.length) {
+    const debtor = debtors[i];
+    const creditor = creditors[j];
+    
+    // How much can be transferred?
+    const amount = Math.min(Math.abs(debtor.amount), creditor.amount);
+    
+    // Check if this transfer involves Me and Them
+    const debtorIsMe = matchesMember(debtor.id, me);
+    const debtorIsThem = matchesMember(debtor.id, them);
+    const creditorIsMe = matchesMember(creditor.id, me);
+    const creditorIsThem = matchesMember(creditor.id, them);
+
+    if (debtorIsThem && creditorIsMe) {
+        // Them pays Me (Them owes Me) -> Positive balance for Me
+        balanceDelta += amount;
+    } else if (debtorIsMe && creditorIsThem) {
+         // I pay Them (I owe Them) -> Negative balance for Me
+         balanceDelta -= amount;
+    }
+
+    // Update Nets (simulate transaction)
+    debtor.amount += amount;
+    creditor.amount -= amount;
+
+    if (Math.abs(debtor.amount) < 0.001) i++;
+    if (creditor.amount < 0.001) j++;
+  }
+  
+  return balanceDelta;
+}
