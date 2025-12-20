@@ -234,7 +234,7 @@ router.delete('/:id/members/:friendId', async (req, res) => {
 
     // 4. Check pairwise balance with EACH other member
     let hasOutstandingBalance = false;
-    let balanceDetails: string[] = [];
+    const balanceDetails: string[] = [];
     
     for (const otherMember of (members || [])) {
         if (otherMember.friend_id === friendId) continue; // Skip self

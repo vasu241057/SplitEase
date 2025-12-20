@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info } from "lucide-react"

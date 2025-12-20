@@ -6,15 +6,19 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"test": "vitest",
+		"test": "vitest run -c vitest.unit.config.ts",
+		"test:worker": "vitest run -c vitest.config.mts",
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"@types/cors": "^2.8.19",
 		"@types/node": "^24.10.1",
+		"@types/supertest": "^6.0.3",
 		"@types/web-push": "^3.6.4",
+		"supertest": "^7.1.4",
 		"typescript": "^5.5.2",
+		"vite-tsconfig-paths": "^6.0.3",
 		"vitest": "~3.2.0",
 		"wrangler": "^4.51.0"
 	},

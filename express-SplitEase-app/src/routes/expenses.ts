@@ -216,50 +216,40 @@ router.post('/', async (req, res) => {
   });
   console.log('[BALANCE_DEBUG] Splits to be created:', JSON.stringify(splits, null, 2));
   
-  const { data: expense, error: expenseError } = await supabase
-    .from('expenses')
-    .insert([{
-      description,
-      amount,
-      date: date || new Date().toISOString(),
-      payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
-      payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
-      group_id: groupId,
-      deleted: false,
-      created_by: creatorUserId  // Track who added the expense
-    }])
-    .select()
-    .single();
-
-  if (expenseError) return res.status(500).json({ error: expenseError.message });
-
-  console.log('[BALANCE_DEBUG] Expense created with ID:', expense.id);
-  console.log('[BALANCE_DEBUG] Expense DB record:', {
-    id: expense.id,
-    payer_id: expense.payer_id,
-    payer_user_id: expense.payer_user_id,
-    group_id: expense.group_id,
-    amount: expense.amount
-  });
-
-  const splitInserts = await Promise.all(splits.map(async (s: any) => ({
-    expense_id: expense.id,
-    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
+  // === ATOMIC RPC CALL ===
+  // 1. Prepare Splits (Async Logic for ID resolution)
+  const preparedSplits = await Promise.all(splits.map(async (s: any) => ({
     user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
+    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
     amount: s.amount,
     paid_amount: s.paidAmount || 0,
     paid: s.paid || false
   })));
 
-  console.log('[BALANCE_DEBUG] Split inserts prepared:', JSON.stringify(splitInserts, null, 2));
+  const rpcParams = {
+    p_description: description,
+    p_amount: amount,
+    p_date: date || new Date().toISOString(),
+    p_payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
+    p_payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
+    p_group_id: groupId,
+    p_created_by: creatorUserId,
+    p_splits: preparedSplits
+  };
 
-  const { error: splitError } = await supabase
-    .from('expense_splits')
-    .insert(splitInserts);
+  const { data: expenseRecord, error: rpcError } = await supabase.rpc('create_expense_with_splits', rpcParams);
 
-  if (splitError) return res.status(500).json({ error: splitError.message });
+  if (rpcError) return res.status(500).json({ error: rpcError.message });
+  
+  // Cast to expected shape (RPC returns JSONB which loses some type info, but runtime checks are fine)
+  const expense: any = expenseRecord;
+  expense.splits = preparedSplits; // Ensure local consistency if needed for logic below (Wait, RPC returns expense only?)
+  // RPC returns expense record. Does it return splits? Current SQL returns `v_expense_record`.
+  // RecalculateBalances does its own fetch.
+  // But line 274: `const newExpense = { ...expense, splits }`. It uses the `splits` from request body (original).
+  // So validation holds.
 
-  console.log('[BALANCE_DEBUG] Splits inserted successfully');
+  console.log('[BALANCE_DEBUG] Expense atomic creation successful. ID:', expense.id);
   console.log('[BALANCE_DEBUG] ===== TRIGGERING RECALCULATE BALANCES =====');
 
   try {

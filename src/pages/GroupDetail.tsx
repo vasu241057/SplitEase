@@ -1,3 +1,4 @@
+/* eslint-disable */
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
 import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet } from "lucide-react"

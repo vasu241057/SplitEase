@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Card } from "../components/ui/card"
 import { cn } from "../utils/cn"
 import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
+import { calculatePairwiseExpenseDebt } from "../utils/groupBalanceUtils"
 
 export function FriendDetail() {
   const { id } = useParams<{ id: string }>()
@@ -209,7 +210,8 @@ export function FriendDetail() {
             onClick={() => navigate("/settle-up", { 
               state: { 
                 friendId: friend.id,
-                defaultDirection: friend.balance > 0 ? "receiving" : "paying"
+                defaultDirection: friend.balance > 0 ? "receiving" : "paying",
+                amount: Math.abs(friend.balance).toFixed(2)
               } 
             })}
           >
@@ -274,11 +276,33 @@ export function FriendDetail() {
                                 </div>
                                 <div className="text-right">
                                     <p className="font-bold">₹{expense.amount.toFixed(2)}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        {expense.payerId === currentUser.id
-                                        ? `You paid`
-                                        : `They paid`}
-                                    </p>
+                                    <div className="text-xs text-muted-foreground flex flex-col items-end">
+                                        <span>
+                                            {expense.payerId === currentUser.id ? "You paid" : "They paid"}
+                                        </span>
+                                        {(() => {
+                                            // Calculate actual debt effect
+                                            // We must construct generic Member objects for the utility
+                                            const meRef = { id: currentUser.id, userId: currentUser.id };
+                                            // For friend, we try to use linked_user_id if available for userId matching
+                                            const friendRef = { 
+                                                id: friend.id, 
+                                                userId: friend.linked_user_id || undefined 
+                                            };
+                                            
+                                            const debt = calculatePairwiseExpenseDebt({ splits: expense.splits }, meRef, friendRef);
+                                            // debt > 0 means Friend Owes Me (I lent)
+                                            // debt < 0 means I Owe Friend (I borrowed)
+                                            
+                                            if (Math.abs(debt) < 0.01) return <span className="text-xs italic">Settled</span>;
+
+                                            return (
+                                                <span className={debt > 0 ? "text-green-600" : "text-red-600"}>
+                                                    {debt > 0 ? `You lent ₹${debt.toFixed(2)}` : `You borrowed ₹${Math.abs(debt).toFixed(2)}`}
+                                                </span>
+                                            )
+                                        })()}
+                                    </div>
                                 </div>
                             </div>
                         </Card>

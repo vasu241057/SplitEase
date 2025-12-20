@@ -276,7 +276,7 @@ export function AddExpense() {
            const getPaymentDistribution = (targetAmount: number, totalAmount: number) => {
               // Distribute 'targetAmount' among payers proportional to their total payment
               // This is an approximation but robust.
-              let distributedPayers: Record<string, number> = {}
+              const distributedPayers: Record<string, number> = {}
               let remaining = targetAmount
               
               groupPayers.forEach((pid, index) => {
@@ -357,7 +357,7 @@ export function AddExpense() {
 
         // Determine Payer Distribution
         let splits: { userId: string, amount: number, paidAmount: number, paid: boolean }[] = []
-        let finalPayerAmounts: Record<string, number> = {}
+        const finalPayerAmounts: Record<string, number> = {}
 
         // Calculate Paid Amounts
         if (groupPayers.length === 1) {
@@ -369,7 +369,7 @@ export function AddExpense() {
              })
         }
         
-        let finalSplitAmounts: Record<string, number> = {}
+        const finalSplitAmounts: Record<string, number> = {}
         const allUserIds = Array.from(new Set([...groupPayers, ...groupSplitMembers]))
 
         // Calculate Split Amounts based on Mode
