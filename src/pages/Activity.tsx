@@ -18,13 +18,29 @@ export function Activity() {
   const activities: ActivityItem[] = [
     ...allExpenses
       .filter(e => {
+         // Rule: Group expenses visible to all group members
+         if (e.groupId) {
+           const group = groups.find(g => g.id === e.groupId)
+           const isMember = group?.members.some(m => m.userId === currentUser.id)
+           if (isMember) return true
+         }
+         // Rule: Personal expenses visible only to participants
          const isPayer = e.payerId === currentUser.id
          const isInSplit = e.splits.some(s => s.userId === currentUser.id)
          return isPayer || isInSplit
       })
       .map(e => ({ ...e, type: 'expense' as const })),
     ...transactions
-      .filter(t => t.fromId === currentUser.id || t.toId === currentUser.id)
+      .filter(t => {
+         // Rule: Group transactions visible to all group members
+         if (t.groupId) {
+           const group = groups.find(g => g.id === t.groupId)
+           const isMember = group?.members.some(m => m.userId === currentUser.id)
+           if (isMember) return true
+         }
+         // Rule: Personal transactions visible only to participants
+         return t.fromId === currentUser.id || t.toId === currentUser.id
+      })
       .map(t => ({ ...t, type: 'payment' as const }))
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 

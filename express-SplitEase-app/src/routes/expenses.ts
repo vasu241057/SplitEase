@@ -32,9 +32,6 @@ router.get('/', async (req, res) => {
   if (error) {
     return res.status(500).json({ error: error.message });
   }
-
-  // console.error(`[DEBUG] Found ${data?.length || 0} expenses for UserID: ${userId}`);
-  // console.error(`[DEBUG] Raw Data:`, JSON.stringify(data, null, 2)); // Uncomment for verbose logs
   
   const formatted = data.map((e: any) => ({
     ...e,
