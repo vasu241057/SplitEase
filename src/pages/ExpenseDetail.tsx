@@ -169,9 +169,9 @@ export function ExpenseDetail() {
 
   return (
     <div className="fixed top-0 left-0 right-0 bottom-16 md:bottom-0 z-40 bg-background flex flex-col">
-      <div className="flex-none container mx-auto px-4 pt-4 pb-3 space-y-6 max-h-[60vh] overflow-y-auto">
+      <div className="flex-none container mx-auto px-4 pb-3 space-y-6 max-h-[60vh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 z-50 bg-background flex items-center justify-between pb-1">
+        <div className="sticky top-0 z-50 bg-background flex items-center justify-between pt-4 pb-1 -mx-4 px-4">
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-6 w-6" />
           </Button>

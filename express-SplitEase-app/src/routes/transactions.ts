@@ -9,15 +9,43 @@ router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
-  // Join with friends table to get linked_user_id
+  const userId = (req as any).user.id;
+
+  // Get transactions where user is involved:
+  // 1. User created the transaction (created_by)
+  // 2. User owns the friend record (friend.owner_id)
+  // 3. User is the linked user (friend.linked_user_id)
+  // 4. Transaction is in a group user is a member of
+  
   const { data, error } = await supabase
     .from('transactions')
-    .select('*, friend:friends(linked_user_id)');
-  
+    .select('*, friend:friends(owner_id, linked_user_id)');
   
   if (error) return res.status(500).json({ error: error.message });
+
+  // Get user's group memberships for group transaction filtering
+  const { data: userGroups } = await supabase
+    .from('group_members')
+    .select('group_id, friends!inner(linked_user_id)')
+    .eq('friends.linked_user_id', userId);
   
-  const formatted = data.map((t: any) => {
+  const userGroupIds = new Set((userGroups || []).map((g: any) => g.group_id));
+
+  // Filter transactions to only those user should see
+  const filteredData = (data || []).filter((t: any) => {
+    // 1. User created it
+    if (t.created_by === userId) return true;
+    // 2. User owns the friend record
+    if (t.friend?.owner_id === userId) return true;
+    // 3. User is the linked user
+    if (t.friend?.linked_user_id === userId) return true;
+    // 4. Transaction is in a group user belongs to
+    if (t.group_id && userGroupIds.has(t.group_id)) return true;
+    
+    return false;
+  });
+  
+  const formatted = filteredData.map((t: any) => {
     // Determine fromId and toId based on created_by (who initiated the transaction)
     let fromId = '';
     let toId = '';
@@ -25,7 +53,7 @@ router.get('/', async (req, res) => {
     // The person who created the transaction is one party
     const creatorId = t.created_by;
     // The other party is the friend (either their linked_user_id or friend_id)
-    const otherPartyId = t.friend.linked_user_id || t.friend_id;
+    const otherPartyId = t.friend?.linked_user_id || t.friend_id;
     
     // Check if deleted
     const isDeleted = t.deleted || false;
