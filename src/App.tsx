@@ -21,6 +21,7 @@ import { AcceptInvite } from "./pages/AcceptInvite"
 import { ToastProvider } from "./context/ToastContext"
 import { ToastContainer } from "./components/ui/Toast"
 import { useAuth } from "./context/AuthContext"
+import { A2HSPrompt } from "./components/A2HSPrompt"
 
 const RequireAuth = ({ children }: { children: React.ReactElement }) => {
   const { user, loading } = useAuth();
@@ -41,6 +42,7 @@ function App() {
   const location = useLocation()
   const state = location.state as { backgroundLocation?: Location }
   const backgroundLocation = state?.backgroundLocation || location
+  const { user } = useAuth()
 
   return (
       <ToastProvider>
@@ -80,6 +82,7 @@ function App() {
           )}
         </AnimatePresence>
         <ToastContainer />
+        <A2HSPrompt isLoggedIn={!!user} />
       </ToastProvider>
   )
 }

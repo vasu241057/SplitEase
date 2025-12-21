@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from "../components/ui/avatar"
 import { Input } from "../components/ui/input"
 import { api } from "../utils/api"
 import { QRScanner } from "../components/QRScanner"
+import { A2HSInstructions } from "../components/A2HSPrompt"
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -39,6 +40,7 @@ export function Settings() {
   const [notifStatus, setNotifStatus] = useState<'enabled' | 'disabled' | 'loading'>('loading')
   const [showNotifModal, setShowNotifModal] = useState(false)
   const [notifModalState, setNotifModalState] = useState<'prompt' | 'success' | 'denied' | 'blocked'>('prompt')
+  const [showA2HSInstructions, setShowA2HSInstructions] = useState(false)
 
   // Check notification status on mount AND when navigating back to this page
   useEffect(() => {
@@ -265,6 +267,26 @@ export function Settings() {
                {notifStatus === 'enabled' ? 'Enabled' : notifStatus === 'disabled' ? 'Tap to enable' : ''}
              </span>
           </div>
+
+          {/* A2HS Reminder - only show if not standalone */}
+          {typeof window !== 'undefined' && !window.matchMedia('(display-mode: standalone)').matches && !(navigator as any).standalone && (
+            <div 
+              className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors border-t border-border/50" 
+              onClick={() => setShowA2HSInstructions(true)}
+            >
+               <div className="flex items-center gap-3">
+                 <svg className="h-5 w-5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                   <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                   <line x1="12" y1="18" x2="12" y2="18" strokeLinecap="round" />
+                 </svg>
+                 <div>
+                   <span className="font-medium text-sm">Add to Home Screen</span>
+                   <p className="text-xs text-muted-foreground">For best experience</p>
+                 </div>
+               </div>
+               <span className="text-xs text-primary">View steps</span>
+            </div>
+          )}
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-3">
               {theme === "dark" ? (
@@ -437,6 +459,9 @@ export function Settings() {
             </Card>
         </div>
       )}
+
+      {/* A2HS Instructions Modal */}
+      <A2HSInstructions isOpen={showA2HSInstructions} onClose={() => setShowA2HSInstructions(false)} />
     </div>
   )
 }
