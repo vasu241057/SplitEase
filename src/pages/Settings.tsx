@@ -42,20 +42,16 @@ export function Settings() {
 
   // Check notification status on mount AND when navigating back to this page
   useEffect(() => {
-    console.log('[Notif] Settings loaded, checking status...');
     checkNotificationStatus();
-  }, [location.pathname]); // Re-run when route changes
+  }, [location.pathname]);
 
   async function checkNotificationStatus() {
-    console.log('[Notif] checkNotificationStatus called');
     try {
       if (!('Notification' in window)) {
-        console.log('[Notif] Notification API not available');
         setNotifStatus('disabled');
         return;
       }
 
-      console.log('[Notif] Permission:', Notification.permission);
       if (Notification.permission === 'denied') {
         setNotifStatus('disabled');
         return;
@@ -64,29 +60,21 @@ export function Settings() {
       if (Notification.permission === 'granted' && 'serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
-        console.log('[Notif] Local subscription:', sub ? 'exists' : 'null');
         
         if (sub) {
-          // Verify with backend
           try {
-            console.log('[Notif] Checking backend status...');
             const data = await api.get('/api/notifications/status');
-            console.log('[Notif] Backend response:', data);
             setNotifStatus(data?.enabled ? 'enabled' : 'disabled');
-          } catch (err) {
-            console.error('[Notif] Backend check failed:', err);
+          } catch {
             setNotifStatus('disabled');
           }
         } else {
-          console.log('[Notif] No local subscription, disabled');
           setNotifStatus('disabled');
         }
       } else {
-        console.log('[Notif] Permission not granted or no SW');
         setNotifStatus('disabled');
       }
-    } catch (err) {
-      console.error('[Notif] checkNotificationStatus error:', err);
+    } catch {
       setNotifStatus('disabled');
     }
   }
