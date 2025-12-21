@@ -1,6 +1,8 @@
 -- Function to atomically create an expense and its splits
 -- Usage: supabase.rpc('create_expense_with_splits', { ...params... })
 
+DROP FUNCTION IF EXISTS create_expense_with_splits(TEXT, NUMERIC, TIMESTAMPTZ, UUID, UUID, UUID, UUID, JSONB);
+
 CREATE OR REPLACE FUNCTION create_expense_with_splits(
   p_description TEXT,
   p_amount NUMERIC,
@@ -13,6 +15,8 @@ CREATE OR REPLACE FUNCTION create_expense_with_splits(
 )
 RETURNS JSONB
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_expense_id UUID;
@@ -42,3 +46,7 @@ EXCEPTION WHEN OTHERS THEN
   RAISE;
 END;
 $$;
+
+-- Grant execute permission to authenticated users
+GRANT EXECUTE ON FUNCTION create_expense_with_splits(TEXT, NUMERIC, TIMESTAMPTZ, UUID, UUID, UUID, UUID, JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION create_expense_with_splits(TEXT, NUMERIC, TIMESTAMPTZ, UUID, UUID, UUID, UUID, JSONB) TO service_role;

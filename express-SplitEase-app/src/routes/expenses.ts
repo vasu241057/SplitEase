@@ -114,15 +114,41 @@ const notifyExpenseParticipants = async (
 
     let recipientIds: string[] = [];
     if (expense.expense_splits) {
-      recipientIds = expense.expense_splits.map((s: any) => s.user_id);
+      // Collect user_ids directly from splits
+      const directUserIds = expense.expense_splits
+        .map((s: any) => s.user_id)
+        .filter((id: string | null) => id !== null);
+      
+      // For friend_id entries, lookup linked_user_id from friends table
+      const friendIds = expense.expense_splits
+        .map((s: any) => s.friend_id)
+        .filter((id: string | null) => id !== null);
+      
+      if (friendIds.length > 0) {
+        const { data: friends } = await supabase
+          .from('friends')
+          .select('linked_user_id')
+          .in('id', friendIds);
+        
+        if (friends) {
+          const linkedUserIds = friends
+            .map((f: any) => f.linked_user_id)
+            .filter((id: string | null) => id !== null);
+          recipientIds = [...directUserIds, ...linkedUserIds];
+        } else {
+          recipientIds = directUserIds;
+        }
+      } else {
+        recipientIds = directUserIds;
+      }
     }
     
     // Add Payer if not in splits (rare but possible)
     if (expense.payer_user_id) recipientIds.push(expense.payer_user_id);
 
-    // Filter sender
+    // Filter sender and remove duplicates
     const currentUserId = req.user.id;
-    recipientIds = recipientIds.filter(id => id !== currentUserId);
+    recipientIds = recipientIds.filter(id => id && id !== currentUserId);
     recipientIds = [...new Set(recipientIds)];
 
     if (recipientIds.length === 0) return;
@@ -232,14 +258,16 @@ router.post('/', async (req, res) => {
     p_date: date || new Date().toISOString(),
     p_payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
     p_payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
-    p_group_id: groupId,
+    p_group_id: groupId || null,
     p_created_by: creatorUserId,
     p_splits: preparedSplits
   };
 
   const { data: expenseRecord, error: rpcError } = await supabase.rpc('create_expense_with_splits', rpcParams);
 
-  if (rpcError) return res.status(500).json({ error: rpcError.message });
+  if (rpcError) {
+    return res.status(500).json({ error: rpcError.message });
+  }
   
   // Cast to expected shape (RPC returns JSONB which loses some type info, but runtime checks are fine)
   const expense: any = expenseRecord;
