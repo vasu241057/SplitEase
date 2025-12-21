@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { useLocation } from "react-router-dom"
 import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2, QrCode } from "lucide-react"
 import { useTheme } from "../context/ThemeContext"
 import { useAuth } from "../context/AuthContext"
@@ -29,6 +30,7 @@ const PUBLIC_VAPID_KEY = "BOgFWXxAEi9KkhmM7hbNqUByhTZ9vKtXoIxjtsk9q73rg5rnYKpsQL
 export function Settings() {
   const { theme, setTheme } = useTheme()
   const { signOut, user } = useAuth()
+  const location = useLocation()
   const [isEditing, setIsEditing] = useState(false)
   const [newName, setNewName] = useState(user?.user_metadata?.full_name || "")
   const [loading, setLoading] = useState(false)
@@ -38,18 +40,22 @@ export function Settings() {
   const [showNotifModal, setShowNotifModal] = useState(false)
   const [notifModalState, setNotifModalState] = useState<'prompt' | 'success' | 'denied' | 'blocked'>('prompt')
 
-  // Check notification status on mount
+  // Check notification status on mount AND when navigating back to this page
   useEffect(() => {
+    console.log('[Notif] Settings loaded, checking status...');
     checkNotificationStatus();
-  }, []);
+  }, [location.pathname]); // Re-run when route changes
 
   async function checkNotificationStatus() {
+    console.log('[Notif] checkNotificationStatus called');
     try {
       if (!('Notification' in window)) {
+        console.log('[Notif] Notification API not available');
         setNotifStatus('disabled');
         return;
       }
 
+      console.log('[Notif] Permission:', Notification.permission);
       if (Notification.permission === 'denied') {
         setNotifStatus('disabled');
         return;
@@ -58,21 +64,29 @@ export function Settings() {
       if (Notification.permission === 'granted' && 'serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
+        console.log('[Notif] Local subscription:', sub ? 'exists' : 'null');
+        
         if (sub) {
           // Verify with backend
           try {
+            console.log('[Notif] Checking backend status...');
             const data = await api.get('/api/notifications/status');
+            console.log('[Notif] Backend response:', data);
             setNotifStatus(data?.enabled ? 'enabled' : 'disabled');
-          } catch {
+          } catch (err) {
+            console.error('[Notif] Backend check failed:', err);
             setNotifStatus('disabled');
           }
         } else {
+          console.log('[Notif] No local subscription, disabled');
           setNotifStatus('disabled');
         }
       } else {
+        console.log('[Notif] Permission not granted or no SW');
         setNotifStatus('disabled');
       }
-    } catch {
+    } catch (err) {
+      console.error('[Notif] checkNotificationStatus error:', err);
       setNotifStatus('disabled');
     }
   }
