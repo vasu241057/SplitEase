@@ -148,6 +148,7 @@ router.post('/:id/members', async (req, res) => {
   const { id } = req.params;
   const { memberId } = req.body;
   const supabase = createSupabaseClient();
+  const currentUserId = (req as any).user?.id;
 
   const { error } = await supabase
     .from('group_members')
@@ -172,6 +173,51 @@ router.post('/:id/members', async (req, res) => {
         userId: gm.friends.linked_user_id
     }))
   };
+
+  // === GROUP INVITE NOTIFICATION ===
+  const envKey = process.env as any;
+  const env = {
+    SUPABASE_URL: envKey.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: envKey.SUPABASE_SERVICE_ROLE_KEY,
+    VAPID_PUBLIC_KEY: envKey.VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: envKey.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: envKey.VAPID_SUBJECT
+  };
+
+  if (env.VAPID_PUBLIC_KEY) {
+    try {
+      // Get the added member's linked_user_id
+      const { data: addedFriend } = await supabase
+        .from('friends')
+        .select('linked_user_id')
+        .eq('id', memberId)
+        .single();
+      
+      const recipientUserId = addedFriend?.linked_user_id;
+      
+      // Only notify if it's a real user and not the person adding themselves
+      if (recipientUserId && recipientUserId !== currentUserId) {
+        // Get sender name
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', currentUserId)
+          .single();
+        
+        const senderName = profile?.full_name || 'Someone';
+        const title = `Added to ${group.name} 👥`;
+        const body = `${senderName} added you`;
+        const url = `/groups/${id}`;
+        
+        console.log(`[Groups] Notifying new member. User: ${recipientUserId}, Group: ${group.name}`);
+        
+        const { sendPushNotification } = await import('../utils/push');
+        await sendPushNotification(env, [recipientUserId], title, body, url);
+      }
+    } catch (err) {
+      console.error('[Groups] Failed to send group invite notification:', err);
+    }
+  }
 
   res.json(formattedGroup);
 });

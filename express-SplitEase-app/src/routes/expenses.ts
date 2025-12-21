@@ -158,22 +158,47 @@ const notifyExpenseParticipants = async (
       .single();
     
     const senderName = profile?.full_name || 'Someone';
-    const title = `${senderName} ${action}`;
     
+    // Get group name for context (if group expense)
+    let context = '';
+    if (expense.group_id) {
+      const { data: group } = await supabase
+        .from('groups')
+        .select('name')
+        .eq('id', expense.group_id)
+        .single();
+      context = group?.name || '';
+    }
+    
+    // Redesigned notification templates
+    let title = '';
     let body = overrideBody;
-    if (!body) {
-        if (action.includes('added')) {
-             body = `${senderName} added an expense of ₹${expense.amount} for '${expense.description}'`;
-        } else {
-             body = expense.description || 'Expense details';
-        }
+    
+    if (action.includes('added')) {
+      title = `₹${expense.amount} added 💸`;
+      body = body || (context 
+        ? `${senderName} • "${expense.description}" in ${context}`
+        : `${senderName} • "${expense.description}"`);
+    } else if (action.includes('deleted')) {
+      title = `Expense deleted`;
+      body = body || `${senderName} removed "${expense.description}"`;
+    } else if (action.includes('restored')) {
+      title = `Expense restored`;
+      body = body || `${senderName} restored "${expense.description}"`;
+    } else if (action.includes('updated')) {
+      title = `Expense updated`;
+      body = body || `${senderName} updated "${expense.description}"`;
+    } else {
+      // Fallback
+      title = `Expense activity`;
+      body = body || expense.description || 'Expense details';
     }
     
     // Fix: Deep link must match Frontend Route /expenses/:id
     const url = `/expenses/${expenseId}`;
 
     console.log(`[Expenses] Notifying participants. Sender: ${senderName}, Action: ${action}`);
-    console.log(`[Expenses] Recipients: ${JSON.stringify(recipientIds)}`);
+    console.log(`[Expenses] Recipients: ${JSON.stringify(recipientIds)}`)
     console.log(`[Expenses] Payload: Title="${title}", Body="${body}", URL="${url}"`);
 
     const { sendPushNotification } = await import('../utils/push');

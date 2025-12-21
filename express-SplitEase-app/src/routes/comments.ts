@@ -115,7 +115,6 @@ router.post('/:entityType/:entityId', async (req, res) => {
   if (env.VAPID_PUBLIC_KEY) { 
         try {
             let recipientIds: string[] = [];
-            const title = `New comment from ${profile?.full_name || 'Someone'}`;
             let expenseTitle = '';
 
             // Construct specific URL based on entity type
@@ -150,10 +149,11 @@ router.post('/:entityType/:entityId', async (req, res) => {
                 }
             }
             
-            // Contextual Body
+            // Redesigned notification template
+            const title = `${profile?.full_name || 'Someone'} 💬`;
             const body = expenseTitle 
-                ? `${profile?.full_name || 'Someone'} commented on '${expenseTitle}': '${content}'`
-                : `${profile?.full_name || 'Someone'} commented: '${content}'`;
+                ? `"${content.length > 50 ? content.slice(0, 50) + '...' : content}" on ${expenseTitle}`
+                : `"${content.length > 50 ? content.slice(0, 50) + '...' : content}"`;
 
             // Remove sender
             recipientIds = recipientIds.filter(id => id !== userId);

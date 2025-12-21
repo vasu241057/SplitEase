@@ -180,9 +180,38 @@ const notifyTransactionParticipants = async (
       .single();
     
     const senderName = profile?.full_name || 'Someone';
-    // 'recorded a payment' or 'deleted a payment'
-    const title = `${senderName} ${action}`;
-    const body = overrideBody || `${senderName} settled up ₹${transaction.amount} with you`;
+    
+    // Get group context if this is a group transaction
+    let context = '';
+    if (transaction.group_id) {
+      const { data: group } = await supabase
+        .from('groups')
+        .select('name')
+        .eq('id', transaction.group_id)
+        .single();
+      context = group?.name || '';
+    }
+    
+    // Redesigned notification templates
+    let title = '';
+    let body = overrideBody;
+    
+    if (action.includes('recorded') || action.includes('created') || action.includes('settled')) {
+      title = `₹${transaction.amount} settled 💰`;
+      body = body || (context 
+        ? `${senderName} paid in ${context}`
+        : `${senderName} paid you`);
+    } else if (action.includes('deleted')) {
+      title = `Payment deleted`;
+      body = body || `${senderName} removed a ₹${transaction.amount} payment`;
+    } else if (action.includes('restored')) {
+      title = `Payment restored`;
+      body = body || `${senderName} restored a ₹${transaction.amount} payment`;
+    } else {
+      // Fallback
+      title = `Payment activity`;
+      body = body || `${senderName} • ₹${transaction.amount}`;
+    }
     
     // Fix: Deep link must match Frontend Route /payments/:id
     const url = `/payments/${transactionId}`;
