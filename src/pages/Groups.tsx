@@ -1,3 +1,4 @@
+import { useMemo } from "react"
 import { Plus, Users } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { useData } from "../context/DataContext"
@@ -6,9 +7,11 @@ import { Card } from "../components/ui/card"
 import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
+import { cn } from "../utils/cn"
+import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "../utils/groupBalanceUtils"
 
 export function Groups() {
-  const { groups, friends, loading, expenses } = useData()
+  const { groups, friends, loading, expenses, transactions, currentUser } = useData()
   const navigate = useNavigate()
 
   // Calculate net balance for groups (mock logic as group balance isn't directly stored)
@@ -23,10 +26,57 @@ export function Groups() {
 
   const netBalance = totalOwed - totalOwe
 
-  // Count expenses per group
-  const getGroupExpenseCount = (groupId: string) => {
-    return expenses.filter(e => e.groupId === groupId && !e.deleted).length
-  }
+
+
+  // Calculate current user's net balance in a group (what others owe me - what I owe others)
+  const groupBalances = useMemo(() => {
+    const balances: Record<string, number> = {};
+    
+    groups.forEach(group => {
+      // Find current user's member record in this group
+      const myMemberRecord = group.members.find(
+        (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+      );
+      
+      if (!myMemberRecord) {
+        balances[group.id] = 0;
+        return;
+      }
+      
+      const meRef: GroupMember = { 
+        id: myMemberRecord.id, 
+        userId: currentUser.id 
+      };
+      
+      const groupExpenses = expenses.filter(e => e.groupId === group.id);
+      const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+      
+      let myBalance = 0;
+      
+      // Calculate balance with each other member
+      group.members.forEach((member: any) => {
+        if (member.id === myMemberRecord.id || member.userId === currentUser.id) return;
+        
+        const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
+        
+        groupExpenses.forEach(expense => {
+          myBalance += calculatePairwiseExpenseDebt(expense, meRef, themRef);
+        });
+        
+        groupTransactions.forEach((t: any) => {
+          if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+            myBalance += t.amount;
+          } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+            myBalance -= t.amount;
+          }
+        });
+      });
+      
+      balances[group.id] = myBalance;
+    });
+    
+    return balances;
+  }, [groups, expenses, transactions, currentUser.id]);
 
   return (
     <div className="space-y-6">
@@ -69,7 +119,9 @@ export function Groups() {
           </p>
         ) : (
           groups.map((group) => {
-            const expenseCount = getGroupExpenseCount(group.id)
+            const balance = groupBalances[group.id] || 0
+            const isSettled = Math.abs(balance) < 0.01
+            
             return (
             <Link key={group.id} to={`/groups/${group.id}`} className="block">
               <Card className="p-4 hover:bg-accent/50 transition-colors">
@@ -83,8 +135,25 @@ export function Groups() {
                       {group.type} • {group.members.length} members
                     </p>
                   </div>
-                  <div className="text-sm text-muted-foreground">
-                    {expenseCount === 0 ? "No expenses" : `${expenseCount} expense${expenseCount > 1 ? 's' : ''}`}
+                  <div className="text-right">
+                    {isSettled ? (
+                      <p className="text-sm text-muted-foreground">settled</p>
+                    ) : (
+                      <>
+                        <p className={cn(
+                          "text-xs font-medium",
+                          balance > 0 ? "text-green-600" : "text-red-600"
+                        )}>
+                          {balance > 0 ? "you get back" : "you owe"}
+                        </p>
+                        <p className={cn(
+                          "font-bold",
+                          balance > 0 ? "text-green-600" : "text-red-600"
+                        )}>
+                          ₹{Math.abs(balance).toFixed(2)}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -96,3 +165,4 @@ export function Groups() {
     </div>
   )
 }
+
