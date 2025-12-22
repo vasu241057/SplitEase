@@ -34,34 +34,46 @@ self.addEventListener('notificationclick', function(event) {
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      // Case 1 & 2: App is open (foreground or background)
       if (clientList.length > 0) {
-        // Find a focused client, or use the first one
-        let targetClient = clientList[0];
+        // Find if there's a focused client
+        let focusedClient = null;
+        let anyClient = clientList[0];
+        
         for (const client of clientList) {
           if (client.focused) {
-            targetClient = client;
+            focusedClient = client;
             break;
           }
         }
 
-        // Use postMessage to tell the React app to navigate
-        // This works for both foreground (app visible) and background (app in memory)
-        console.log('[SW] Sending postMessage to client:', deepLinkUrl);
-        targetClient.postMessage({
-          type: 'DEEP_LINK_NAVIGATION',
-          url: deepLinkUrl
-        });
-
-        return targetClient.focus();
+        if (focusedClient) {
+          // Case 1: App is in FOREGROUND (user is looking at it)
+          // Use postMessage - the listener is active and will navigate
+          console.log('[SW] App in FOREGROUND - using postMessage:', deepLinkUrl);
+          focusedClient.postMessage({
+            type: 'DEEP_LINK_NAVIGATION',
+            url: deepLinkUrl
+          });
+          return focusedClient.focus();
+        } else {
+          // Case 2: App is in BACKGROUND (minimized but in memory)
+          // Use navigate() to change the URL - this will reload the page
+          // When the app re-renders, React Router will read the new URL
+          console.log('[SW] App in BACKGROUND - using navigate():', deepLinkUrl);
+          return anyClient.navigate(deepLinkUrl).then(function(client) {
+            if (client) {
+              return client.focus();
+            }
+          });
+        }
       }
 
       // Case 3: No window open (cold start)
       // Open a new window with the deep link URL
-      // The app will read this URL on mount via BrowserRouter
-      console.log('[SW] Opening new window:', deepLinkUrl);
+      console.log('[SW] COLD START - opening new window:', deepLinkUrl);
       return clients.openWindow(deepLinkUrl);
     })
   );
 });
+
 
