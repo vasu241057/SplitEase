@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, Zap } from "lucide-react"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
 import { useGroupBalance } from "../hooks/useGroupBalance"
