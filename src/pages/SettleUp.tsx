@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Loader2 } from "lucide-react"
+import { ArrowLeft, Loader2, Info } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
@@ -29,6 +29,9 @@ export function SettleUp() {
 
   // Filter groups where both I and the selected friend are members
   const selectedGroup = groups.find(g => g.id === groupId);
+  
+  // Check if simplification is enabled for this group
+  const isSimplified = selectedGroup ? localStorage.getItem(`simplify_debts_${selectedGroup.id}`) === 'true' : false;
 
   // Derive available users to settle with
   // If Group is selected: Show Group Members (excluding me)
@@ -145,6 +148,15 @@ export function SettleUp() {
               disabled={loading}
             />
           </div>
+          {isSimplified && (
+              <div className="flex items-start gap-2 mt-2 text-xs text-muted-foreground animate-in fade-in">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <p>
+                      This amount reflects simplified group debts.<br/>
+                      <span className="opacity-80">Simplification reduces payments but keeps totals unchanged.</span>
+                  </p>
+              </div>
+          )}
         </div>
 
         <Button type="submit" className="w-full" size="lg" disabled={loading}>

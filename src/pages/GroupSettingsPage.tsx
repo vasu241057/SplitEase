@@ -1,7 +1,8 @@
 /* eslint-disable */
 import { useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info } from "lucide-react"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, Zap } from "lucide-react"
+import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
 import { useGroupBalance } from "../hooks/useGroupBalance"
 import { api } from "../utils/api"
@@ -33,6 +34,17 @@ export function GroupSettingsPage() {
         onConfirm: () => void
     } | null>(null)
     const [errorModal, setErrorModal] = useState<string | null>(null)
+
+    const [simplifyDebts, setSimplifyDebts] = useState(() => {
+        if (!group) return false;
+        return localStorage.getItem(`simplify_debts_${group.id}`) === 'true';
+    });
+
+    const handleToggleSimplify = (enabled: boolean) => {
+        if (!group) return;
+        setSimplifyDebts(enabled);
+        localStorage.setItem(`simplify_debts_${group.id}`, String(enabled));
+    };
 
     // Handlers
     const handleSaveName = async () => {
@@ -210,6 +222,48 @@ export function GroupSettingsPage() {
                                 </div>
                             )
                         })}
+                    </div>
+                </div>
+
+                {/* Display Preferences */}
+                <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
+                        Preferences
+                    </h3>
+                    <div className="bg-card border rounded-lg p-4 flex items-center justify-between">
+                         <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                                <Label htmlFor="simplify-debts" className="text-base font-medium">Simplify group debts</Label>
+                                <div className="group relative flex items-center">
+                                    <Info className="h-4 w-4 text-muted-foreground cursor-help ml-1" />
+                                    <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover text-popover-foreground text-xs rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity w-48 pointer-events-none border">
+                                        Reduces the number of payments needed. Your total balance stays the same.
+                                    </div>
+                                </div>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                                Reduces the number of payments needed.<br/>
+                                Your total amount owed or received does not change.
+                            </p>
+                        </div>
+                        {/* Simple Switch Implementation */}
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={simplifyDebts}
+                            onClick={() => handleToggleSimplify(!simplifyDebts)}
+                            className={cn(
+                                "w-11 h-6 rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border-2 border-transparent",
+                                simplifyDebts ? "bg-primary" : "bg-input"
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    "block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform",
+                                    simplifyDebts ? "translate-x-5" : "translate-x-0"
+                                )}
+                            />
+                        </button>
                     </div>
                 </div>
 

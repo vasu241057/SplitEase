@@ -10,6 +10,7 @@ import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
 import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "../utils/groupBalanceUtils"
+import { simplifyGroupDebts, type MemberBalance } from "../utils/debtSimplification"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -23,6 +24,13 @@ export function GroupDetail() {
   const [errorModal, setErrorModal] = useState<string | null>(null) // State for generic errors handling
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]) // For bulk selection
   const [isAddingMembers, setIsAddingMembers] = useState(false) // Loading state for bulk add
+
+
+  // Simplify Debts Preference
+  const [simplifyDebts] = useState(() => {
+    if (!id) return false;
+    return localStorage.getItem(`simplify_debts_${id}`) === 'true';
+  });
 
   const handleBack = () => {
     const fromFriendId = location.state?.fromFriendId
@@ -66,54 +74,130 @@ export function GroupDetail() {
     )
   }, [friends, group?.members, searchQuery])
 
+  // Define group activity arrays early
+  const groupExpenses = useMemo(() => expenses.filter((e) => e.groupId === group?.id), [expenses, group?.id]);
+  const groupTransactions = useMemo(() => transactions.filter((t) => t.groupId === group?.id && !t.deleted), [transactions, group?.id]);
+
+  // Calculate Net Balances for Simplification
+  const netBalances = useMemo<MemberBalance[]>(() => {
+    if (!group) return [];
+    
+    const balances = new Map<string, number>();
+    group.members.forEach(m => balances.set(m.id, 0));
+
+    // Expenses
+    groupExpenses.forEach(exp => {
+        // Payer
+        const payerMember = group.members.find(m => matchesMember(exp.payerId, { id: m.id, userId: m.userId || undefined }));
+        if (payerMember) {
+             balances.set(payerMember.id, (balances.get(payerMember.id) || 0) + exp.amount);
+        }
+
+        // Splits
+        exp.splits.forEach(split => {
+             const splitMember = group.members.find(m => matchesMember(split.userId, { id: m.id, userId: m.userId || undefined }));
+             if (splitMember) {
+                 balances.set(splitMember.id, (balances.get(splitMember.id) || 0) - (split.amount || 0));
+             }
+        });
+    });
+
+    // Transactions
+    groupTransactions.forEach(tx => {
+        const fromMember = group.members.find(m => matchesMember(tx.fromId, { id: m.id, userId: m.userId || undefined }));
+        const toMember = group.members.find(m => matchesMember(tx.toId, { id: m.id, userId: m.userId || undefined }));
+
+        if (fromMember) balances.set(fromMember.id, (balances.get(fromMember.id) || 0) + tx.amount);
+        if (toMember) balances.set(toMember.id, (balances.get(toMember.id) || 0) - tx.amount);
+    });
+
+    return Array.from(balances.entries()).map(([userId, balance]) => ({ userId, balance }));
+  }, [group, groupExpenses, groupTransactions]);
+
+  // Derived Simplified Debts
+  const calculationResult = useMemo(() => {
+      if (!simplifyDebts) return [];
+      try {
+          return simplifyGroupDebts(netBalances);
+      } catch (e) {
+          console.error("Simplification failed:", e);
+          return null;
+      }
+  }, [simplifyDebts, netBalances]);
+
+  const simplificationError = simplifyDebts && calculationResult === null;
+  const simplifiedDebts = calculationResult || [];
+
+
   // View-Specific Balances (For the Cards "You owe X") - Using unified utilities
   const balancesRelativeToMe = useMemo(() => {
        if (!group) return [];
        
-       const groupExpenses = expenses.filter(e => e.groupId === group.id);
-       const groupTransactions = transactions.filter(t => t.groupId === group.id && !t.deleted);
-       
-       // Find current user's member record in the group to get their friend_id
+       // Find current user's member record in the group
        const myMemberRecord = group.members.find(
            (m: any) => m.id === currentUser.id || m.userId === currentUser.id
        );
        
-       // Use friend_id from group membership, falling back to global user ID
        const meRef: GroupMember = { 
            id: myMemberRecord?.id || currentUser.id, 
            userId: currentUser.id 
        };
-      
-       const results = group.members.map(member => {
-            if (member.id === currentUser.id || member.userId === currentUser.id) {
-                return null;
-            }
-            
-            // Other member as GroupMember for unified matching
-            const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-             
-            let balance = 0;
 
-             groupExpenses.forEach((expense) => {
-                 const expenseEffect = calculatePairwiseExpenseDebt(expense, meRef, themRef);
-                 balance += expenseEffect;
-             });
-             
-             groupTransactions.forEach((t) => {
-                 if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
-                     balance += t.amount;
-                 } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
-                     balance -= t.amount;
-                 }
-             });
-             
-             const isSettled = Math.abs(balance) < 0.01;
-             
-             return { member, balance, isSettled };
-       }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
+       if (simplifyDebts && !simplificationError) {
+           // --- SIMPLIFIED MODE ---
+           return simplifiedDebts
+                .filter(d => d.from === meRef.id || d.to === meRef.id)
+                .map(debt => {
+                    const isOwe = debt.from === meRef.id;
+                    const otherId = isOwe ? debt.to : debt.from;
+                    const member = group.members.find(m => m.id === otherId);
+                    
+                    if (!member) return null;
 
-       return results;
-  }, [group, expenses, transactions, currentUser.id]);
+                    return {
+                        member,
+                        balance: isOwe ? -debt.amount : debt.amount,
+                        isSettled: false
+                    };
+                })
+                .filter((m): m is NonNullable<typeof m> => m !== null);
+
+       } else {
+           // --- RAW LEDGER MODE ---
+           const groupExpenses = expenses.filter(e => e.groupId === group.id);
+           const groupTransactions = transactions.filter(t => t.groupId === group.id && !t.deleted);
+           
+           const results = group.members.map(member => {
+                if (member.id === currentUser.id || member.userId === currentUser.id) {
+                    return null;
+                }
+                
+                const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
+                let balance = 0;
+    
+                 groupExpenses.forEach((expense) => {
+                     const expenseEffect = calculatePairwiseExpenseDebt(expense, meRef, themRef);
+                     balance += expenseEffect;
+                 });
+                 
+                 groupTransactions.forEach((t) => {
+                     // Transaction effect on balance
+                     // If I paid Them (I owe Them) -> Balance -
+                     // If Them paid Me (Them owes Me) -> Balance +
+                     if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+                         balance += t.amount;
+                     } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+                         balance -= t.amount;
+                     }
+                 });
+                 
+                 const isSettled = Math.abs(balance) < 0.01;
+                 return { member, balance, isSettled };
+           }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
+
+           return results;
+       }
+  }, [group, expenses, transactions, currentUser.id, simplifyDebts, simplifiedDebts]);
 
 
   if (loading) {
@@ -128,8 +212,7 @@ export function GroupDetail() {
     return <div>Group not found</div>
   }
 
-  const groupExpenses = expenses.filter((e) => e.groupId === group.id)
-  const groupTransactions = transactions.filter((t) => t.groupId === group.id && !t.deleted)
+  // groupExpenses/Transactions defined above
   
   // Combined activity: expenses + transactions, sorted by date (newest first)
   const groupActivity = [
@@ -203,6 +286,19 @@ export function GroupDetail() {
 
       {/* Group Balance Summary (Relative to Me) */}
       <div className="space-y-1 px-1">
+        {/* Safety Warning Banner */}
+        {simplificationError && (
+             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-2 animate-in fade-in slide-in-from-top-2">
+                 <p className="text-sm text-amber-600 dark:text-amber-400 font-medium flex items-center gap-2">
+                     <Info className="h-4 w-4" />
+                     Simplification Unavailable
+                 </p>
+                 <p className="text-xs text-muted-foreground mt-1 ml-6">
+                     Unable to simplify debts due to a balance mismatch. Showing original balances to ensure accuracy.
+                 </p>
+            </div>
+        )}
+
         {isGroupSettled ? (
              <div className="flex items-center justify-center  bg-muted/20 rounded-lg py-3">
                 <span className="text-muted-foreground font-medium flex items-center gap-2">
@@ -220,6 +316,7 @@ export function GroupDetail() {
                  </p>
             </div>
         ) : (
+
             balancesRelativeToMe.map(({ member, balance }) => {
                 const isOwe = balance < 0;
                 const amount = Math.abs(balance).toFixed(2);
@@ -232,11 +329,23 @@ export function GroupDetail() {
                             </Avatar>
                             <span className="text-sm font-medium">{member.name}</span>
                         </div>
-                        <span className={cn("text-sm font-bold", 
-                            isOwe ? "text-red-500" : "text-green-500"
-                        )}>
-                            {isOwe ? "you owe" : "owes you"} ₹{amount}
-                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className={cn("text-sm font-bold", 
+                                isOwe ? "text-red-500" : "text-green-500"
+                            )}>
+                                {isOwe ? "you owe" : "owes you"} ₹{amount}
+                            </span>
+                            {/* User Education: Why this payment? */}
+                            {simplifyDebts && !simplificationError && (
+                                <div className="group relative flex items-center">
+                                    <Info className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                    <div className="absolute right-0 top-full mt-1 z-50 w-48 p-2 bg-popover text-popover-foreground text-xs rounded-md shadow-md border opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                        This payment simplifies the group’s debts.<br/> 
+                                        Instead of multiple people paying each other, this settles everything with fewer payments.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )
             })
@@ -470,27 +579,47 @@ export function GroupDetail() {
                         userId: currentUser.id
                      };
                      
-                     groupExpenses.forEach((expense) => {
-                        const expenseEffect = calculatePairwiseExpenseDebt(
-                            expense,
-                            meRef, // ME
-                            { id: member.id, userId: member.userId ?? undefined } // THEM
-                        );
-                        balance += expenseEffect;
-                     });
-                      const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-                      groupTransactions.forEach((t: any) => {
-                          // Clean use of matchesMember via unified object
-                          // ME -> THEM: I paid (positive balance for me if I am creditor? Wait.)
-                          // Logic: if I paid, balance += amount (They owe Me)
-                          const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-                          
-                          if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
-                              balance += t.amount;
-                          } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
-                              balance -= t.amount;
-                          }
-                      });
+                     
+                     // SIMPLIFIED MODE HANDLING IN SETTLE UP
+                     if (simplifyDebts && !simplificationError) {
+                         // Find simplified edge
+                         // 1. Me -> Them (I owe)
+                         const iOweThem = simplifiedDebts.find(d => d.from === meRef.id && d.to === member.id);
+                         if (iOweThem) {
+                             balance = -iOweThem.amount;
+                         } else {
+                             // 2. Them -> Me (They owe)
+                             const theyOweMe = simplifiedDebts.find(d => d.from === member.id && d.to === meRef.id);
+                             if (theyOweMe) {
+                                 balance = theyOweMe.amount;
+                             } else {
+                                 balance = 0; // Settled in simplified view
+                             }
+                         }
+                     } else {
+                         // RAW PAIRWISE CALCULATION
+                        groupExpenses.forEach((expense) => {
+                            const expenseEffect = calculatePairwiseExpenseDebt(
+                                expense,
+                                meRef, // ME
+                                { id: member.id, userId: member.userId ?? undefined } // THEM
+                            );
+                            balance += expenseEffect;
+                        });
+                        const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
+                        groupTransactions.forEach((t: any) => {
+                            // Clean use of matchesMember via unified object
+                            // ME -> THEM: I paid (positive balance for me if I am creditor? Wait.)
+                            // Logic: if I paid, balance += amount (They owe Me)
+                            const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
+                            
+                            if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+                                balance += t.amount;
+                            } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+                                balance -= t.amount;
+                            }
+                        });
+                     }
 
                      console.log('│ SETTLE-UP BALANCE:', balance);
                      console.log('└──────────────────────────────────────────────────────────────');
@@ -507,9 +636,20 @@ export function GroupDetail() {
                                 </Avatar>
                                 <div>
                                     <p className="font-medium">{member.name}</p>
-                                    <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
-                                        {isOwe ? "you owe" : "owes you"} ₹{amount}
-                                    </p>
+                                    <div className="flex items-center gap-2">
+                                        <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
+                                            {isOwe ? "you owe" : "owes you"} ₹{amount}
+                                        </p>
+                                        {/* User Education: Why 0.00? */}
+                                        {simplifyDebts && !simplificationError && Math.abs(balance) < 0.01 && (
+                                            <div className="group relative flex items-center">
+                                                <Info className="h-3 w-3 text-muted-foreground/50 cursor-help" />
+                                                <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-48 p-2 bg-popover text-popover-foreground text-xs rounded-md shadow-md border opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                                                    You’re already settled through another member’s payment.
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                             <Button size="sm" onClick={() => {

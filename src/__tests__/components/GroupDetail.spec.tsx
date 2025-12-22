@@ -108,6 +108,17 @@ vi.mock('../../hooks/useGroupBalance', () => ({
     })
 }));
 
+// Mock LocalStorage
+Object.defineProperty(window, 'localStorage', {
+  value: {
+    getItem: vi.fn(),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  },
+  writable: true
+});
+
 
 describe('GroupDetail Component', () => {
 
@@ -120,7 +131,7 @@ describe('GroupDetail Component', () => {
          expect(screen.getByText('Test Group')).toBeInTheDocument();
     });
 
-    it('shows correct balace summary from hook', () => {
+    it('shows correct balance summary from hook', () => {
          // The component renders individual cards "owes you ₹50.00"
          render(
              <MemoryRouter>
