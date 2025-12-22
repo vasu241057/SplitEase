@@ -52,37 +52,51 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   // Note: This is intentionally called from effects to detect app activation
   const captureDeepLink = useCallback(() => {
     const currentPath = window.location.pathname;
-    console.log('[DeepLink] Checking current URL on activation:', currentPath);
+    const timestamp = new Date().toISOString();
+    console.log(`[DeepLink ${timestamp}] Checking URL (activationId: ${activationId}):`, currentPath);
     
     if (isDeepLinkPath(currentPath)) {
       // Check if we already have this pending (avoid duplicates)
       const existing = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
-      if (existing !== currentPath) {
-        console.log('[DeepLink] Capturing deep-link:', currentPath);
+      console.log(`[DeepLink] Existing in storage: ${existing}, Current: ${currentPath}`);
+      
+      // ALWAYS capture if it's a deep link path, even if it matches (to ensure state is set for this activation)
+      // But only update state if needed to avoid loops
+      if (existing !== currentPath || pendingPath !== currentPath) {
+        console.log(`[DeepLink] capturing NEW deep-link:`, currentPath);
         sessionStorage.setItem(PENDING_DEEPLINK_KEY, currentPath);
+
         setPendingPath(currentPath);
+      } else {
+        console.log(`[DeepLink] Deep-link already captured/pending`);
       }
+    } else {
+        console.log(`[DeepLink] URL is NOT a deep-link path`);
     }
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  }, []);
+
+  }, [activationId, pendingPath]);
 
   // Detect app activation (pageshow handles iOS PWA resume better than visibilitychange)
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
       // persisted = true means page was restored from bfcache (back-forward cache)
       // This is common on iOS PWA "resume"
-      console.log('[DeepLink] pageshow event, persisted:', event.persisted);
+      console.log(`[DeepLink ${new Date().toISOString()}] PAGESHOW event. Persisted: ${event.persisted}`);
       
       // Reset state for new activation
+      console.log('[DeepLink] RESETTING STATE for new activation');
       setHasProcessed(false);
       navigationDone.current = false;
       setActivationId(id => id + 1);
+      
+      // We need to capture immediately
       captureDeepLink();
     };
 
     const handleVisibilityChange = () => {
+      console.log(`[DeepLink ${new Date().toISOString()}] Visibility change: ${document.visibilityState}`);
       if (document.visibilityState === 'visible') {
-        console.log('[DeepLink] visibility changed to visible');
+        console.log('[DeepLink] App became VISIBLE. Checking deep links...');
         // Don't fully reset here - pageshow is more reliable for cold starts
         // But do capture any new deep-link
         captureDeepLink();
@@ -93,9 +107,10 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Initial capture on mount - these setState calls are intentional for activation detection
+
     // eslint-disable-next-line react-hooks/set-state-in-effect
     captureDeepLink();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setActivationId(1);
 
     return () => {
@@ -149,8 +164,11 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
 
     // Skip if already processed this activation
     if (hasProcessed && lastActivationId.current === activationId) {
+    //   console.log('[DeepLink] Already processed for this activation, skipping.');
       return;
     }
+
+    console.log(`[DeepLink] Processing effect. User: ${!!user}, HasProcessed: ${hasProcessed}, Activation: ${activationId}, LastActivation: ${lastActivationId.current}`);
 
     // Mark this activation as being processed
     lastActivationId.current = activationId;
@@ -158,15 +176,17 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     // If no user, mark as processed (will redirect to login)
     if (!user) {
       console.log('[DeepLink] No user, marking as processed');
+
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasProcessed(true);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+
       setPendingPath(null);
       return;
     }
 
     // Check for pending deep-link
     const storedPath = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
+    console.log(`[DeepLink] Check Stored Path: ${storedPath}, NavigationDone: ${navigationDone.current}`);
     
     if (storedPath && !navigationDone.current) {
       console.log('[DeepLink] Processing stored deep-link:', storedPath);
@@ -182,9 +202,9 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     
     // Mark as processed
     console.log('[DeepLink] Deep-link processing complete for activation:', activationId);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setHasProcessed(true);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setPendingPath(null);
   }, [authLoading, user, hasProcessed, activationId, navigate, location.pathname]);
 

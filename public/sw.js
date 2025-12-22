@@ -29,11 +29,14 @@ self.addEventListener('push', function(event) {
 
 self.addEventListener('notificationclick', function(event) {
   const deepLinkUrl = event.notification.data?.url || '/';
-  console.log('[SW] Notification Clicked, deepLink:', deepLinkUrl);
+  const timestamp = new Date().toISOString();
+  console.log(`[SW ${timestamp}] Notification Clicked, deepLink:`, deepLinkUrl);
   event.notification.close();
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      console.log(`[SW] Found ${clientList.length} clients`);
+      
       if (clientList.length > 0) {
         // Find if there's a focused client
         let focusedClient = null;

@@ -80,7 +80,7 @@ const SmartHomeRedirect = () => {
   
   // If deep-link is pending or not resolved, show skeleton instead of redirecting
   if (!isDeepLinkResolved || isDeepLinkPending) {
-    console.log('[SmartHomeRedirect] Blocking redirect, deep-link processing...');
+    console.log(`[SmartHomeRedirect] Blocking redirect. Resolved: ${isDeepLinkResolved}, Pending: ${isDeepLinkPending}`);
     return <AppLoadingSkeleton />;
   }
   
@@ -153,10 +153,13 @@ function AppRoutes() {
 }
 
 // Main App component wraps everything with DeepLinkProvider
+import { DebugConsole } from "./components/DebugConsole";
+
 function App() {
   return (
     <DeepLinkProvider>
       <AppRoutes />
+      <DebugConsole />
     </DeepLinkProvider>
   );
 }
