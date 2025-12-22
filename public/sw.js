@@ -1,3 +1,6 @@
+// SplitEase Service Worker
+const DEEP_LINK_STORAGE_KEY = 'splitease_pending_deeplink';
+
 self.addEventListener('push', function(event) {
   console.log('[SW] Push Received', event);
   
@@ -25,23 +28,40 @@ self.addEventListener('push', function(event) {
 });
 
 self.addEventListener('notificationclick', function(event) {
-  console.log('[SW] Notification Clicked:', event.notification.data);
+  const deepLinkUrl = event.notification.data?.url || '/';
+  console.log('[SW] Notification Clicked, deepLink:', deepLinkUrl);
   event.notification.close();
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      // Case 1 & 2: App is open (foreground or background)
       if (clientList.length > 0) {
-        let client = clientList[0];
-        for (let i = 0; i < clientList.length; i++) {
-          if (clientList[i].focused) {
-            client = clientList[i];
+        // Find a focused client, or use the first one
+        let targetClient = clientList[0];
+        for (const client of clientList) {
+          if (client.focused) {
+            targetClient = client;
+            break;
           }
         }
-        if (event.notification.data.url) {
-             client.navigate(event.notification.data.url);
-        }
-        return client.focus();
+
+        // Use postMessage to tell the React app to navigate
+        // This works for both foreground (app visible) and background (app in memory)
+        console.log('[SW] Sending postMessage to client:', deepLinkUrl);
+        targetClient.postMessage({
+          type: 'DEEP_LINK_NAVIGATION',
+          url: deepLinkUrl
+        });
+
+        return targetClient.focus();
       }
-      return clients.openWindow(event.notification.data.url || '/');
+
+      // Case 3: No window open (cold start)
+      // Open a new window with the deep link URL
+      // The app will read this URL on mount via BrowserRouter
+      console.log('[SW] Opening new window:', deepLinkUrl);
+      return clients.openWindow(deepLinkUrl);
     })
   );
 });
+

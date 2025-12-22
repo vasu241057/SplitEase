@@ -85,10 +85,15 @@ const RequireAuth = ({ children }: { children: React.ReactElement }) => {
   return children;
 };
 
+import { useDeepLinkHandler } from "./hooks/useDeepLinkHandler"
+
 function App() {
   const location = useLocation()
   const state = location.state as { backgroundLocation?: Location }
   const backgroundLocation = state?.backgroundLocation || location
+
+  // Handle deep-link navigation from push notifications
+  useDeepLinkHandler();
 
   return (
       <ToastProvider>
