@@ -131,9 +131,36 @@ router.post('/:entityType/:entityId', async (req, res) => {
                 
                 if (expense) {
                     expenseTitle = expense.description;
-                    if (expense.expense_splits) {
-                        recipientIds = expense.expense_splits.map((s: any) => s.user_id);
+                    
+                    // Collect user_ids directly from splits
+                    const directUserIds = (expense.expense_splits || [])
+                        .map((s: any) => s.user_id)
+                        .filter((id: string | null) => id !== null);
+                    
+                    // For friend_id entries (group expenses), lookup linked_user_id
+                    const friendIds = (expense.expense_splits || [])
+                        .map((s: any) => s.friend_id)
+                        .filter((id: string | null) => id !== null);
+                    
+                    if (friendIds.length > 0) {
+                        const { data: friends } = await supabase
+                            .from('friends')
+                            .select('linked_user_id')
+                            .in('id', friendIds);
+                        
+                        if (friends) {
+                            const linkedUserIds = friends
+                                .map((f: any) => f.linked_user_id)
+                                .filter((id: string | null) => id !== null);
+                            recipientIds = [...directUserIds, ...linkedUserIds];
+                        } else {
+                            recipientIds = directUserIds;
+                        }
+                    } else {
+                        recipientIds = directUserIds;
                     }
+                    
+                    // Add payer if not already included
                     if (expense.payer_user_id) recipientIds.push(expense.payer_user_id);
                 }
             } else if (entityType === 'payment') {
