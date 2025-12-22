@@ -38,7 +38,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear notification banner state so it shows again on next login
     localStorage.removeItem('splitease_notif_banner_dismissed');
     // Clear A2HS prompt state so it shows again on next login
-    sessionStorage.removeItem('splitease_a2hs_dismissed');
+    localStorage.removeItem('splitease_a2hs_dismissed');
     await supabase.auth.signOut();
   };
 

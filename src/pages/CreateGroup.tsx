@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
-import { Plane, Home, Heart, FileText } from "lucide-react"
+import { Plane, Home, Heart, FileText, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
@@ -21,19 +21,24 @@ export function CreateGroup() {
   const { addGroup } = useData()
   const [name, setName] = useState("")
   const [type, setType] = useState<"trip" | "home" | "couple" | "other">("trip")
+  const [isCreating, setIsCreating] = useState(false)
 
   const origin = (location.state as { origin?: { x: number; y: number } })?.origin
   const clipPathOrigin = origin ? `${origin.x}px ${origin.y}px` : "90% 20%"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!name.trim() || isCreating) return
 
-    // Create group with no members initially
-    await addGroup(name, type, [])
-    
-    // Navigate back to groups page
-    navigate("/groups")
+    setIsCreating(true)
+    try {
+      // Create group with no members initially
+      await addGroup(name, type, [])
+      // Navigate back to groups page
+      navigate("/groups")
+    } finally {
+      setIsCreating(false)
+    }
   }
 
   return (
@@ -56,10 +61,10 @@ export function CreateGroup() {
         <Button
           variant="ghost"
           onClick={handleSubmit}
-          disabled={!name.trim()}
+          disabled={!name.trim() || isCreating}
           className="text-primary disabled:text-muted-foreground"
         >
-          Done
+          {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Done"}
         </Button>
       </div>
 

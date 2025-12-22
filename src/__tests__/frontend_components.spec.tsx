@@ -10,6 +10,11 @@ vi.mock('../context/DataContext', () => ({
   useData: () => mockUseData(),
 }));
 
+// Mock AuthContext
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'user_me', email: 'me@test.com' } }),
+}));
+
 // Mock basic UI components to avoid rendering complexities
 vi.mock('../components/ui/button', () => ({ Button: ({ children, ...props }: any) => <button {...props}>{children}</button> }));
 vi.mock('../components/ui/avatar', () => ({ 
@@ -32,6 +37,16 @@ vi.mock('lucide-react', () => ({
 Object.defineProperty(window, 'localStorage', {
   value: {
     getItem: vi.fn(),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+  },
+  writable: true
+});
+
+Object.defineProperty(window, 'sessionStorage', {
+  value: {
+    getItem: vi.fn(() => null),
     setItem: vi.fn(),
     removeItem: vi.fn(),
     clear: vi.fn(),
@@ -75,7 +90,8 @@ describe('Phase 2 Frontend Component Coverage', () => {
                 currentUser: mockCurrentUser,
                 groups: [{ id: 'g1', members: [{id: 'user_me', userId: 'user_me'}, {id: 'friend_ghost', userId: 'friend_ghost_uid'}] }],
                 expenses: [], 
-                transactions: []
+                transactions: [],
+                allExpenses: []
             });
 
             render(
@@ -110,7 +126,8 @@ describe('Phase 2 Frontend Component Coverage', () => {
                 currentUser: mockCurrentUser,
                 groups: [{ id: 'g1', members: [{id: 'user_me', userId: 'user_me'}, {id: 'friend_active', userId: 'friend_active_uid'}] }],
                 expenses: [expense],
-                transactions: []
+                transactions: [],
+                allExpenses: [expense]
             });
 
             render(

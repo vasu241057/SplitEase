@@ -3,6 +3,7 @@ import { useState, useMemo } from "react"
 import { Plus, Bell, X } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useData } from "../context/DataContext"
+import { useAuth } from "../context/AuthContext"
 import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Card } from "../components/ui/card"
@@ -11,11 +12,14 @@ import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
 import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
+import { A2HSPrompt } from "../components/A2HSPrompt"
 
 const NOTIF_BANNER_DISMISSED_KEY = "splitease_notif_banner_dismissed"
+const A2HS_INITIAL_COUNT_KEY = "splitease_a2hs_initial_count"
 
 export function Friends() {
-  const { friends, loading, currentUser, groups, expenses, transactions } = useData()
+  const { friends, loading, currentUser, groups, expenses, transactions, allExpenses } = useData()
+  const { user } = useAuth()
   
   // Calculate effective balances - use breakdown sum for group-only friends
   const friendsWithEffectiveBalance = useMemo(() => {
@@ -45,6 +49,23 @@ export function Friends() {
     setShowNotifBanner(false)
     localStorage.setItem(NOTIF_BANNER_DISMISSED_KEY, "true")
   }
+  
+  // Track initial expense count for A2HS - store in sessionStorage per session
+  // Compute and store in one pass without useState/useEffect
+  const hasCreatedNewExpense = useMemo(() => {
+    if (typeof window === 'undefined' || loading) return false
+    
+    // Get or set initial count
+    let storedInitial = sessionStorage.getItem(A2HS_INITIAL_COUNT_KEY)
+    if (storedInitial === null) {
+      // First time: capture initial count
+      sessionStorage.setItem(A2HS_INITIAL_COUNT_KEY, String(allExpenses.length))
+      return false // No new expense yet (just set baseline)
+    }
+    
+    // Compare current to initial
+    return allExpenses.length > parseInt(storedInitial, 10)
+  }, [loading, allExpenses.length])
   
   // Filter for display:
   // 1. Always show explicit friends (isGroupMemberOnly false/undefined)
@@ -105,6 +126,9 @@ export function Friends() {
           </div>
         </div>
       )}
+
+      {/* A2HS nudge - show after first new expense this session */}
+      <A2HSPrompt isLoggedIn={!!user} hasCreatedNewExpense={hasCreatedNewExpense} />
 
       {loading ? (
         <div className="bg-primary text-primary-foreground p-6 rounded-2xl shadow-lg">

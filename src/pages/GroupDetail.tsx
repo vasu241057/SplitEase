@@ -1,7 +1,6 @@
-/* eslint-disable */
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet } from "lucide-react"
+import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet, Loader2, Check } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
@@ -22,6 +21,8 @@ export function GroupDetail() {
   const [showSettleUpModal, setShowSettleUpModal] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [errorModal, setErrorModal] = useState<string | null>(null) // State for generic errors handling
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]) // For bulk selection
+  const [isAddingMembers, setIsAddingMembers] = useState(false) // Loading state for bulk add
 
   const handleBack = () => {
     const fromFriendId = location.state?.fromFriendId
@@ -147,17 +148,34 @@ export function GroupDetail() {
     return friends.find((f) => f.id === id || f.linked_user_id === id)?.name || "Unknown"
   }
 
-  const handleAddMember = async (friendId: string) => {
+  // Toggle selection for bulk add
+  const toggleMemberSelection = (friendId: string) => {
+    setSelectedMembers(prev => 
+      prev.includes(friendId) 
+        ? prev.filter(id => id !== friendId)
+        : [...prev, friendId]
+    )
+  }
+
+  // Bulk add selected members
+  const handleAddSelectedMembers = async () => {
+    if (selectedMembers.length === 0) return
+    
+    setIsAddingMembers(true)
     try {
-      const res = await api.post(`/api/groups/${group.id}/members`, { memberId: friendId })
-      if (res) {
-        await refreshGroups()
+      // Add each selected member (notifications sent by API)
+      for (const friendId of selectedMembers) {
+        await api.post(`/api/groups/${group.id}/members`, { memberId: friendId })
       }
+      await refreshGroups()
     } catch (error) {
-      console.error("Failed to add member:", error)
+      console.error("Failed to add members:", error)
+    } finally {
+      setIsAddingMembers(false)
+      setSelectedMembers([])
+      setShowAddMember(false)
+      setSearchQuery("")
     }
-    setShowAddMember(false)
-    setSearchQuery("")
   }
 
   return (
@@ -337,16 +355,29 @@ export function GroupDetail() {
       {showAddMember && (
         <div className="fixed inset-0 bg-background z-[60] flex flex-col animate-in slide-in-from-bottom-5 duration-200">
            <div className="flex items-center justify-between p-4 border-b">
-            <h2 className="text-xl font-bold">Add Member</h2>
             <Button
               variant="ghost"
               size="icon"
               onClick={() => {
                 setShowAddMember(false)
                 setSearchQuery("")
+                setSelectedMembers([])
               }}
             >
               <X className="h-5 w-5" />
+            </Button>
+            <h2 className="text-xl font-bold">Add Members</h2>
+            <Button
+              variant="ghost"
+              onClick={handleAddSelectedMembers}
+              disabled={selectedMembers.length === 0 || isAddingMembers}
+              className="text-primary disabled:text-muted-foreground"
+            >
+              {isAddingMembers ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                `Done${selectedMembers.length > 0 ? ` (${selectedMembers.length})` : ''}`
+              )}
             </Button>
           </div>
           <div className="p-4 border-b">
@@ -368,19 +399,34 @@ export function GroupDetail() {
                 </p>
               ) : (
                 <div className="space-y-2">
-                    {availableFriends.map((friend) => (
-                    <div
-                        key={friend.id}
-                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={() => handleAddMember(friend.id)}
-                    >
-                        <Avatar>
-                        <AvatarImage src={friend.avatar} />
-                        <AvatarFallback>{friend.name[0]}</AvatarFallback>
-                        </Avatar>
-                        <span className="font-medium">{friend.name}</span>
-                    </div>
-                    ))}
+                    {availableFriends.map((friend) => {
+                      const isSelected = selectedMembers.includes(friend.id)
+                      return (
+                        <div
+                            key={friend.id}
+                            className={cn(
+                              "flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors",
+                              isSelected ? "bg-primary/10" : "hover:bg-muted/50"
+                            )}
+                            onClick={() => toggleMemberSelection(friend.id)}
+                        >
+                            {/* Checkbox */}
+                            <div className={cn(
+                              "h-5 w-5 rounded border-2 flex items-center justify-center transition-colors",
+                              isSelected 
+                                ? "bg-primary border-primary" 
+                                : "border-muted-foreground"
+                            )}>
+                              {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                            </div>
+                            <Avatar>
+                              <AvatarImage src={friend.avatar} />
+                              <AvatarFallback>{friend.name[0]}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">{friend.name}</span>
+                        </div>
+                      )
+                    })}
                 </div>
               )}
            </div>

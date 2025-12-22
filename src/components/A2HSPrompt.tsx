@@ -12,8 +12,8 @@ const getA2HSStatus = () => {
   const isIOS = /iPhone|iPad|iPod/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS/.test(ua)
   const isAndroid = /Android/.test(ua) && /Chrome/.test(ua)
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true
-  // Use sessionStorage so it shows once per login session
-  const isDismissed = sessionStorage.getItem(A2HS_DISMISSED_KEY) === 'true'
+  // Use localStorage - cleared on logout (see AuthContext.tsx signOut)
+  const isDismissed = localStorage.getItem(A2HS_DISMISSED_KEY) === 'true'
   
   return {
     canShow: (isIOS || isAndroid) && !isStandalone && !isDismissed,
@@ -25,9 +25,10 @@ const getA2HSStatus = () => {
 
 interface A2HSPromptProps {
   isLoggedIn: boolean
+  hasCreatedNewExpense: boolean // Computed by parent component
 }
 
-export function A2HSPrompt({ isLoggedIn }: A2HSPromptProps) {
+export function A2HSPrompt({ isLoggedIn, hasCreatedNewExpense }: A2HSPromptProps) {
   // Use useMemo to compute platform info once (avoids setState in useEffect)
   const { canShow, isIOS, isAndroid } = useMemo(() => getA2HSStatus(), [])
   
@@ -35,11 +36,12 @@ export function A2HSPrompt({ isLoggedIn }: A2HSPromptProps) {
   const [isDismissed, setIsDismissed] = useState(false)
   const [showInstructions, setShowInstructions] = useState(false)
   
-  const showPrompt = isLoggedIn && canShow && !isDismissed
+  // Only show after user creates NEW expense in THIS session
+  const showPrompt = isLoggedIn && hasCreatedNewExpense && canShow && !isDismissed
   const platform = { isIOS, isAndroid }
 
   const handleDismiss = () => {
-    sessionStorage.setItem(A2HS_DISMISSED_KEY, 'true')
+    localStorage.setItem(A2HS_DISMISSED_KEY, 'true')
     setIsDismissed(true)
   }
 
@@ -56,43 +58,28 @@ export function A2HSPrompt({ isLoggedIn }: A2HSPromptProps) {
 
   return (
     <>
-      {/* Bottom Sheet Prompt */}
+      {/* Inline Nudge Banner - styled like notification banner */}
       {showPrompt && !showInstructions && (
-        <div className="fixed bottom-20 left-4 right-4 z-50 animate-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-card border border-border rounded-xl shadow-lg p-4">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Plus className="h-5 w-5 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm">Add SplitEase to your Home Screen</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Quick access and more reliable notifications
-                </p>
-              </div>
-              <button 
-                onClick={handleDismiss}
-                className="text-muted-foreground hover:text-foreground p-1 -mt-1 -mr-1"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <Button 
-                size="sm" 
-                variant="outline" 
-                className="flex-1"
-                onClick={handleDismiss}
-              >
-                Not now
-              </Button>
-              <Button 
-                size="sm" 
-                className="flex-1"
-                onClick={handleAddClick}
-              >
+        <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 rounded-xl p-4 relative">
+          <button 
+            onClick={handleDismiss}
+            className="absolute top-2 right-2 text-indigo-400 hover:text-indigo-600"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <div className="flex items-start gap-3 pr-6">
+            <Plus className="h-5 w-5 text-indigo-500 mt-0.5 flex-shrink-0" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-indigo-900 dark:text-indigo-100">
                 Add to Home Screen
-              </Button>
+              </p>
+              <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                Quick access and better notifications.{" "}
+                <button onClick={handleAddClick} className="underline font-medium">
+                  See how
+                </button>
+              </p>
             </div>
           </div>
         </div>
