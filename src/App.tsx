@@ -21,6 +21,7 @@ import { AcceptInvite } from "./pages/AcceptInvite"
 import { ToastProvider } from "./context/ToastContext"
 import { ToastContainer } from "./components/ui/Toast"
 import { useAuth } from "./context/AuthContext"
+import { DeepLinkProvider, useDeepLink } from "./context/DeepLinkContext"
 
 import { Skeleton } from "./components/ui/skeleton"
 import { Card } from "./components/ui/card"
@@ -70,6 +71,24 @@ const AppLoadingSkeleton = () => (
   </div>
 );
 
+/**
+ * SmartHomeRedirect - Only redirects to /friends AFTER deep-link is resolved
+ * This prevents the default redirect from "winning" over deep-link navigation
+ */
+const SmartHomeRedirect = () => {
+  const { isDeepLinkResolved, isDeepLinkPending } = useDeepLink();
+  
+  // If deep-link is pending or not resolved, show skeleton instead of redirecting
+  if (!isDeepLinkResolved || isDeepLinkPending) {
+    console.log('[SmartHomeRedirect] Blocking redirect, deep-link processing...');
+    return <AppLoadingSkeleton />;
+  }
+  
+  // Deep-link resolved, safe to redirect to /friends
+  console.log('[SmartHomeRedirect] Deep-link resolved, redirecting to /friends');
+  return <Navigate to="/friends" replace />;
+};
+
 const RequireAuth = ({ children }: { children: React.ReactElement }) => {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -85,56 +104,62 @@ const RequireAuth = ({ children }: { children: React.ReactElement }) => {
   return children;
 };
 
-import { useDeepLinkHandler } from "./hooks/useDeepLinkHandler"
-
-function App() {
+function AppRoutes() {
   const location = useLocation()
   const state = location.state as { backgroundLocation?: Location }
   const backgroundLocation = state?.backgroundLocation || location
 
-  // Handle deep-link navigation from push notifications
-  useDeepLinkHandler();
-
   return (
-      <ToastProvider>
-        <Routes location={backgroundLocation}>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/invite/:code" element={<AcceptInvite />} />
-          
-          <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
-            <Route path="/invite-friend" element={<InviteFriend />} />
-            <Route path="/" element={<Navigate to="/friends" replace />} />
-            <Route path="/settle-up" element={<SettleUp />} />
-            <Route path="/create-group" element={<CreateGroup />} />
-            <Route path="/add-expense" element={<AddExpense />} />
-            <Route path="/groups" element={<Groups />} />
-            <Route path="/groups/:id" element={<GroupDetail />} />
-            <Route path="/friends" element={<Friends />} />
-            <Route path="/friends/:id" element={<FriendDetail />} />
-            <Route path="/expenses/:id" element={<ExpenseDetail />} />
-            <Route path="/payments/:id" element={<TransactionDetail />} />
-            <Route path="/activity" element={<Activity />} />
-            <Route path="/groups/:id/settings" element={<GroupSettingsPage />} />
-            <Route path="/settings" element={<Settings />} />
-          </Route>
-        </Routes>
+    <ToastProvider>
+      <Routes location={backgroundLocation}>
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/invite/:code" element={<AcceptInvite />} />
+        
+        <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
+          <Route path="/invite-friend" element={<InviteFriend />} />
+          {/* CRITICAL: Use SmartHomeRedirect instead of Navigate */}
+          <Route path="/" element={<SmartHomeRedirect />} />
+          <Route path="/settle-up" element={<SettleUp />} />
+          <Route path="/create-group" element={<CreateGroup />} />
+          <Route path="/add-expense" element={<AddExpense />} />
+          <Route path="/groups" element={<Groups />} />
+          <Route path="/groups/:id" element={<GroupDetail />} />
+          <Route path="/friends" element={<Friends />} />
+          <Route path="/friends/:id" element={<FriendDetail />} />
+          <Route path="/expenses/:id" element={<ExpenseDetail />} />
+          <Route path="/payments/:id" element={<TransactionDetail />} />
+          <Route path="/activity" element={<Activity />} />
+          <Route path="/groups/:id/settings" element={<GroupSettingsPage />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
+      </Routes>
 
-        <AnimatePresence>
-          {location.pathname === "/add-expense" && state?.backgroundLocation && (
-            <Routes location={location}>
-              <Route path="/add-expense" element={<RequireAuth><AddExpense /></RequireAuth>} />
-            </Routes>
-          )}
-          {location.pathname === "/create-group" && state?.backgroundLocation && (
-            <Routes location={location}>
-              <Route path="/create-group" element={<RequireAuth><CreateGroup /></RequireAuth>} />
-            </Routes>
-          )}
-        </AnimatePresence>
-        <ToastContainer />
-      </ToastProvider>
+      <AnimatePresence>
+        {location.pathname === "/add-expense" && state?.backgroundLocation && (
+          <Routes location={location}>
+            <Route path="/add-expense" element={<RequireAuth><AddExpense /></RequireAuth>} />
+          </Routes>
+        )}
+        {location.pathname === "/create-group" && state?.backgroundLocation && (
+          <Routes location={location}>
+            <Route path="/create-group" element={<RequireAuth><CreateGroup /></RequireAuth>} />
+          </Routes>
+        )}
+      </AnimatePresence>
+      <ToastContainer />
+    </ToastProvider>
   )
 }
 
+// Main App component wraps everything with DeepLinkProvider
+function App() {
+  return (
+    <DeepLinkProvider>
+      <AppRoutes />
+    </DeepLinkProvider>
+  );
+}
+
 export default App
+
