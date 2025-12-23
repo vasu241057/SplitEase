@@ -70,11 +70,13 @@ function clearDeepLinkFromIDB(): Promise<void> {
 interface DeepLinkContextType {
   isDeepLinkPending: boolean;
   isDeepLinkResolved: boolean;
+  navigatedToDeepLink: boolean; // True if we navigated to a deep link, so SmartHomeRedirect should not override
 }
 
 const DeepLinkContext = createContext<DeepLinkContextType>({
   isDeepLinkPending: false,
   isDeepLinkResolved: false,
+  navigatedToDeepLink: false,
 });
 
 export const useDeepLink = () => useContext(DeepLinkContext);
@@ -97,6 +99,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingIntent, setIsLoadingIntent] = useState(true); // Block until IDB read completes
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [hasProcessed, setHasProcessed] = useState(false);
+  const [navigatedToDeepLink, setNavigatedToDeepLink] = useState(false);
   
   // Refs
   const navigationDone = useRef(false);
@@ -200,6 +203,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     if (pendingPath && !navigationDone.current) {
       console.log('[CTX PROC] Navigating to:', pendingPath);
       navigationDone.current = true;
+      setNavigatedToDeepLink(true); // CRITICAL: Flag to prevent SmartHomeRedirect override
       
       // Clear from IDB since we're consuming it
       clearDeepLinkFromIDB();
@@ -207,9 +211,14 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
       if (location.pathname !== pendingPath) {
         navigate(pendingPath, { replace: true });
       }
+      
+      // Stop here - don't clear pendingPath or set hasProcessed in same cycle
+      // Let React Router handle the navigation first
+      console.log('[CTX PROC] Navigation initiated, returning');
+      return;
     }
     
-    console.log('[CTX PROC] Processing complete');
+    console.log('[CTX PROC] Processing complete (no navigation needed)');
     setHasProcessed(true);
     setPendingPath(null);
   }, [isLoadingIntent, authLoading, user, hasProcessed, pendingPath, navigate, location.pathname]);
@@ -217,7 +226,8 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   // Derive context value
   const value: DeepLinkContextType = {
     isDeepLinkPending: isLoadingIntent || (pendingPath !== null && !hasProcessed),
-    isDeepLinkResolved: !isLoadingIntent && !authLoading && hasProcessed,
+    isDeepLinkResolved: !isLoadingIntent && !authLoading && (hasProcessed || navigatedToDeepLink),
+    navigatedToDeepLink,
   };
 
   console.log(`[CTX STATE] isLoadingIntent=${isLoadingIntent}, pending=${pendingPath}, processed=${hasProcessed}, resolved=${value.isDeepLinkResolved}`);

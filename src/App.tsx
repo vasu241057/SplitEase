@@ -76,7 +76,13 @@ const AppLoadingSkeleton = () => (
  * This prevents the default redirect from "winning" over deep-link navigation
  */
 const SmartHomeRedirect = () => {
-  const { isDeepLinkResolved, isDeepLinkPending } = useDeepLink();
+  const { isDeepLinkResolved, isDeepLinkPending, navigatedToDeepLink } = useDeepLink();
+  
+  // If we already navigated to a deep link, don't redirect to /friends
+  if (navigatedToDeepLink) {
+    console.log('[SmartHomeRedirect] Already navigated to deep link, returning null');
+    return null;
+  }
   
   // If deep-link is pending or not resolved, show skeleton instead of redirecting
   if (!isDeepLinkResolved || isDeepLinkPending) {
