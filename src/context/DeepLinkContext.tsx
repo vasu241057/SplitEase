@@ -157,15 +157,18 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   // STEP 2: Listen for postMessage from SW (foreground/background cases)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      console.log('[CTX MSG] Received ANY message:', event.data);
+      
       if (event.data?.type === 'DEEP_LINK_NAVIGATION' && event.data?.url) {
         const targetUrl = event.data.url;
-        console.log('[CTX MSG] Received postMessage from SW:', targetUrl);
+        console.log('[CTX MSG] Deep link message received:', targetUrl);
         
         const path = new URL(targetUrl, window.location.origin).pathname;
         
         // If already authenticated, navigate immediately
         if (user && !authLoading) {
           console.log('[CTX MSG] Navigating immediately:', path);
+          setNavigatedToDeepLink(true);
           clearDeepLinkFromIDB(); // Clear since we're handling it
           navigate(path, { replace: true });
         } else {
@@ -179,11 +182,15 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     };
 
     if ('serviceWorker' in navigator) {
+      console.log('[CTX MSG] Registering message listener on navigator.serviceWorker');
       navigator.serviceWorker.addEventListener('message', handleMessage);
+    } else {
+      console.log('[CTX MSG] Service Worker not supported');
     }
 
     return () => {
       if ('serviceWorker' in navigator) {
+        console.log('[CTX MSG] Removing message listener');
         navigator.serviceWorker.removeEventListener('message', handleMessage);
       }
     };
