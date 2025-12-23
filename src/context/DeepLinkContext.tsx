@@ -55,25 +55,30 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     const timestamp = new Date().toISOString();
     console.log(`[DeepLink ${timestamp}] Checking URL (activationId: ${activationId}):`, currentPath);
     
-    if (isDeepLinkPath(currentPath)) {
-      // Check if we already have this pending (avoid duplicates)
-      const existing = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
-      console.log(`[DeepLink] Existing in storage: ${existing}, Current: ${currentPath}`);
-      
-      // ALWAYS capture if it's a deep link path, even if it matches (to ensure state is set for this activation)
-      // But only update state if needed to avoid loops
-      if (existing !== currentPath || pendingPath !== currentPath) {
-        console.log(`[DeepLink] capturing NEW deep-link:`, currentPath);
-        sessionStorage.setItem(PENDING_DEEPLINK_KEY, currentPath);
-
-        setPendingPath(currentPath);
-      } else {
-        console.log(`[DeepLink] Deep-link already captured/pending`);
-      }
-    } else {
-        console.log(`[DeepLink] URL is NOT a deep-link path`);
+    // 1. First, check if we already have a validated deep-link in storage
+    // This is our "Single Source of Truth" regarding intent
+    const storedPath = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
+    
+    if (storedPath && isDeepLinkPath(storedPath)) {
+        console.log(`[DeepLink] RESTORING INTENT from storage:`, storedPath);
+        // Ensure state matches storage
+        if (pendingPath !== storedPath) {
+             // eslint-disable-next-line react-hooks/set-state-in-effect
+             setPendingPath(storedPath);
+        }
+        return; // Intent is secured, stop checking window.location which might be stale/wrong
     }
 
+    // 2. If no stored intent, check the current window location
+    if (isDeepLinkPath(currentPath)) {
+      console.log(`[DeepLink] capturing NEW deep-link from WINDOW:`, currentPath);
+      sessionStorage.setItem(PENDING_DEEPLINK_KEY, currentPath);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPendingPath(currentPath);
+    } else {
+        console.log(`[DeepLink] Window path is NOT a deep-link and no stored intent exists.`);
+    }
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   }, [activationId, pendingPath]);
 
   // Detect app activation (pageshow handles iOS PWA resume better than visibilitychange)

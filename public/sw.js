@@ -51,7 +51,6 @@ self.addEventListener('notificationclick', function(event) {
 
         if (focusedClient) {
           // Case 1: App is in FOREGROUND (user is looking at it)
-          // Use postMessage - the listener is active and will navigate
           console.log('[SW] App in FOREGROUND - using postMessage:', deepLinkUrl);
           focusedClient.postMessage({
             type: 'DEEP_LINK_NAVIGATION',
@@ -60,11 +59,13 @@ self.addEventListener('notificationclick', function(event) {
           return focusedClient.focus();
         } else {
           // Case 2: App is in BACKGROUND (minimized but in memory)
-          // Use navigate() to change the URL - this will reload the page
-          // When the app re-renders, React Router will read the new URL
-          console.log('[SW] App in BACKGROUND - using navigate():', deepLinkUrl);
+          console.log('[SW] App in BACKGROUND - using navigate() + postMessage:', deepLinkUrl);
           return anyClient.navigate(deepLinkUrl).then(function(client) {
             if (client) {
+              client.postMessage({
+                type: 'DEEP_LINK_NAVIGATION',
+                url: deepLinkUrl
+              });
               return client.focus();
             }
           });
@@ -73,8 +74,16 @@ self.addEventListener('notificationclick', function(event) {
 
       // Case 3: No window open (cold start)
       // Open a new window with the deep link URL
-      console.log('[SW] COLD START - opening new window:', deepLinkUrl);
-      return clients.openWindow(deepLinkUrl);
+      console.log('[SW] COLD START - opening new window + postMessage:', deepLinkUrl);
+      return clients.openWindow(deepLinkUrl).then(function(client) {
+        if (client) {
+            // Send the intent explicitly to ensure it sticks even if OS restoration overrides location
+            client.postMessage({
+                type: 'DEEP_LINK_NAVIGATION',
+                url: deepLinkUrl
+            });
+        }
+      });
     })
   );
 });
