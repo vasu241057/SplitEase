@@ -135,6 +135,25 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // STEP 1.5: Re-check IDB when app becomes visible (for background case)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !navigatedToDeepLink && !pendingPath) {
+        console.log('[CTX VIS] App became visible, re-checking IDB...');
+        readDeepLinkFromIDB().then(idbPath => {
+          if (idbPath && isDeepLinkPath(idbPath)) {
+            console.log('[CTX VIS] Found deep link in IDB:', idbPath);
+            setPendingPath(idbPath);
+            setHasProcessed(false);
+          }
+        });
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [navigatedToDeepLink, pendingPath]);
+
   // STEP 2: Listen for postMessage from SW (foreground/background cases)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {

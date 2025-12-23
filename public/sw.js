@@ -173,20 +173,22 @@ self.addEventListener('notificationclick', function(event) {
             type: 'DEEP_LINK_NAVIGATION',
             url: deepLinkUrl
           });
-          // Clear IDB since we delivered directly
-          clearDeepLink();
+          // DON'T clear IDB here - client will clear after consumption
+          // This ensures fallback if postMessage somehow fails
           return focusedClient.focus();
         } else {
           // BACKGROUND: Client exists but not focused
-          console.log('[SW CLICK] BACKGROUND - navigate() + postMessage');
+          // navigate() will reload the page, so postMessage might be lost
+          // IDB will serve as the reliable fallback
+          console.log('[SW CLICK] BACKGROUND - navigate() (IDB is backup)');
           return anyClient.navigate(deepLinkUrl).then(function(client) {
             if (client) {
+              // postMessage is optimistic but might be lost during reload
               client.postMessage({
                 type: 'DEEP_LINK_NAVIGATION',
                 url: deepLinkUrl
               });
-              // Clear IDB since we delivered
-              clearDeepLink();
+              // DON'T clear IDB - page might be reloading, client will clear after reading from IDB
               return client.focus();
             }
           });
