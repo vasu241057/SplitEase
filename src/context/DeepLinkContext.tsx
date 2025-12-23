@@ -81,6 +81,18 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   }, [activationId, pendingPath]);
 
+  // Ask Service Worker for any pending deep links (Handshake to fix cold start race)
+  const checkPendingDeepLink = useCallback(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((registration) => {
+        if (registration.active) {
+            console.log('[DeepLink] Asking SW for pending deep links (Handshake)');
+            registration.active.postMessage({ type: 'CHECK_PENDING_DEEPLINK' });
+        }
+      });
+    }
+  }, []);
+
   // Detect app activation (pageshow handles iOS PWA resume better than visibilitychange)
   useEffect(() => {
     const handlePageShow = (event: PageTransitionEvent) => {
@@ -96,6 +108,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
       
       // We need to capture immediately
       captureDeepLink();
+      checkPendingDeepLink();
     };
 
     const handleVisibilityChange = () => {
@@ -105,6 +118,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
         // Don't fully reset here - pageshow is more reliable for cold starts
         // But do capture any new deep-link
         captureDeepLink();
+        checkPendingDeepLink();
       }
     };
 
@@ -115,6 +129,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     captureDeepLink();
+    checkPendingDeepLink();
 
     setActivationId(1);
 
@@ -122,7 +137,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('pageshow', handlePageShow);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [captureDeepLink]);
+  }, [captureDeepLink, checkPendingDeepLink]);
 
   // Listen for postMessage from service worker (foreground case)
   useEffect(() => {

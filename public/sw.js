@@ -27,11 +27,34 @@ self.addEventListener('push', function(event) {
   }
 });
 
+
+// Store pending deep link to helper with cold-start race conditions
+let pendingDeepLink = null;
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CHECK_PENDING_DEEPLINK') {
+    if (pendingDeepLink) {
+      console.log('[SW] Client asked for pending link, sending:', pendingDeepLink);
+      event.source.postMessage({
+        type: 'DEEP_LINK_NAVIGATION',
+        url: pendingDeepLink
+      });
+      // Clear it after sending to prevent double-consumption
+      pendingDeepLink = null;
+    } else {
+      console.log('[SW] Client asked for pending link, but none found.');
+    }
+  }
+});
+
 self.addEventListener('notificationclick', function(event) {
   const deepLinkUrl = event.notification.data?.url || '/';
   const timestamp = new Date().toISOString();
   console.log(`[SW ${timestamp}] Notification Clicked, deepLink:`, deepLinkUrl);
   event.notification.close();
+  
+  // Store for handshake
+  pendingDeepLink = deepLinkUrl;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
