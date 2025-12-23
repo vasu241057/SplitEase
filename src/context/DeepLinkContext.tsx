@@ -182,6 +182,29 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     };
 
     if ('serviceWorker' in navigator) {
+      // DIAGNOSTIC: Check SW state in detail
+      console.log('[CTX SW DIAG] navigator.serviceWorker exists');
+      console.log('[CTX SW DIAG] controller:', navigator.serviceWorker.controller);
+      console.log('[CTX SW DIAG] controller state:', navigator.serviceWorker.controller?.state);
+      
+      // Check if there's a controller
+      if (!navigator.serviceWorker.controller) {
+        console.log('[CTX SW DIAG] NO CONTROLLER! SW may not have claimed this client yet');
+      }
+      
+      // Wait for SW to be ready and log its status
+      navigator.serviceWorker.ready.then((registration) => {
+        console.log('[CTX SW DIAG] SW is ready:', registration);
+        console.log('[CTX SW DIAG] active SW:', registration.active);
+        console.log('[CTX SW DIAG] active SW state:', registration.active?.state);
+        console.log('[CTX SW DIAG] controller after ready:', navigator.serviceWorker.controller);
+      });
+      
+      // Also listen for controller change
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        console.log('[CTX SW DIAG] Controller changed! New controller:', navigator.serviceWorker.controller);
+      });
+      
       console.log('[CTX MSG] Registering message listener on navigator.serviceWorker');
       navigator.serviceWorker.addEventListener('message', handleMessage);
     } else {
