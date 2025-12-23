@@ -73,6 +73,7 @@ function clearDeepLink() {
     });
   }).catch(err => {
     console.error('[SW IDB] Failed to clear deep link:', err);
+    console.log('additional log');
   });
 }
 
