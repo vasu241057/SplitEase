@@ -98,18 +98,46 @@ self.addEventListener('push', function(event) {
   if (event.data) {
     const data = event.data.json();
     console.log('[SW PUSH] Data:', JSON.stringify(data));
-    
-    const options = {
-      body: data.body,
-      icon: data.icon || '/icon-192x192.png',
-      badge: '/icon-192x192.png',
-      data: {
-        url: data.url
-      }
-    };
+    const deepLinkUrl = data.url || '/';
     
     event.waitUntil(
-      self.registration.showNotification(data.title, options)
+      // First check if there's a focused client (app is in foreground)
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+        let focusedClient = null;
+        for (const client of clientList) {
+          if (client.focused) {
+            focusedClient = client;
+            break;
+          }
+        }
+        
+        if (focusedClient) {
+          // FOREGROUND WORKAROUND: App is visible, iOS won't fire notificationclick
+          // Send deep link directly via postMessage AND save to IDB
+          console.log('[SW PUSH] FOREGROUND - sending postMessage directly');
+          saveDeepLink(deepLinkUrl);
+          focusedClient.postMessage({
+            type: 'DEEP_LINK_NAVIGATION',
+            url: deepLinkUrl
+          });
+          // Still show notification so user knows something arrived
+          return self.registration.showNotification(data.title, {
+            body: data.body,
+            icon: data.icon || '/icon-192x192.png',
+            badge: '/icon-192x192.png',
+            data: { url: deepLinkUrl }
+          });
+        } else {
+          // Not in foreground - show notification normally
+          console.log('[SW PUSH] NOT FOREGROUND - showing notification');
+          return self.registration.showNotification(data.title, {
+            body: data.body,
+            icon: data.icon || '/icon-192x192.png',
+            badge: '/icon-192x192.png',
+            data: { url: deepLinkUrl }
+          });
+        }
+      })
     );
   }
 });
