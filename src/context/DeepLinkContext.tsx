@@ -157,8 +157,8 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   // STEP 1.6: FALLBACK - Poll IDB periodically when in foreground
   // This catches cases where SW saves to IDB but postMessage is lost
   useEffect(() => {
-    // Only poll when app is visible and we haven't already navigated to a deep link
-    if (navigatedToDeepLink || hasProcessed) return;
+    // Only stop polling when we've actually navigated to a deep link
+    if (navigatedToDeepLink) return;
     
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible' && !navigatedToDeepLink && !pendingPath) {
@@ -174,7 +174,7 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     }, 2000); // Poll every 2 seconds
     
     return () => clearInterval(pollInterval);
-  }, [navigatedToDeepLink, hasProcessed, pendingPath]);
+  }, [navigatedToDeepLink, pendingPath]);
 
   // STEP 2: Listen for postMessage from SW (foreground/background cases)
   useEffect(() => {
