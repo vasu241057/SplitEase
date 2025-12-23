@@ -1,8 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
-const PENDING_DEEPLINK_KEY = 'splitease_pending_deeplink';
+// IndexedDB configuration (same as SW)
+const DB_NAME = 'SplitEaseDeepLink';
+const DB_VERSION = 1;
+const STORE_NAME = 'pendingLinks';
 
 // Paths that are NOT deep-links (root navigation tabs)
 const ROOT_PATHS = ['/', '/friends', '/groups', '/activity', '/settings', '/login', '/signup'];
@@ -10,6 +13,59 @@ const ROOT_PATHS = ['/', '/friends', '/groups', '/activity', '/settings', '/logi
 const isDeepLinkPath = (path: string): boolean => {
   return !ROOT_PATHS.includes(path) && path.length > 1;
 };
+
+// IndexedDB helpers (same interface as SW)
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+  });
+}
+
+function readDeepLinkFromIDB(): Promise<string | null> {
+  console.log('[CTX IDB] Reading deep link from IndexedDB...');
+  return openDB().then(db => {
+    return new Promise<string | null>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.get('current');
+      request.onsuccess = () => {
+        const result = request.result || null;
+        console.log('[CTX IDB] Read result:', result);
+        resolve(result);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }).catch(err => {
+    console.error('[CTX IDB] Failed to read:', err);
+    return null;
+  });
+}
+
+function clearDeepLinkFromIDB(): Promise<void> {
+  console.log('[CTX IDB] Clearing deep link from IndexedDB...');
+  return openDB().then(db => {
+    return new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      store.delete('current');
+      tx.oncomplete = () => {
+        console.log('[CTX IDB] Cleared');
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }).catch(err => {
+    console.error('[CTX IDB] Failed to clear:', err);
+  });
+}
 
 interface DeepLinkContextType {
   isDeepLinkPending: boolean;
@@ -24,138 +80,75 @@ const DeepLinkContext = createContext<DeepLinkContextType>({
 export const useDeepLink = () => useContext(DeepLinkContext);
 
 /**
- * DeepLinkProvider - Manages deep-link state and navigation
+ * DeepLinkProvider - Single Source of Truth: IndexedDB
  * 
- * CRITICAL FIX: iOS PWAs don't truly "cold start" on kill - they restore state.
- * This means:
- * - Module top-level code (main.tsx) doesn't re-run
- * - React state persists across "kills"
- * 
- * Solution: Detect app activation via pageshow/visibilitychange events and
- * check for deep-links on EACH activation, not just module initialization.
+ * Architecture:
+ * 1. SW writes deep link to IndexedDB on notification click (survives SW termination)
+ * 2. Client reads from IndexedDB on mount (deterministic, no race conditions)
+ * 3. Client also listens for postMessage (for foreground case where IDB read might be slower)
+ * 4. After consumption, clear IndexedDB
  */
 export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
   
-  // Track activation state - reset on each new activation
-  const [activationId, setActivationId] = useState(0);
-  const [hasProcessed, setHasProcessed] = useState(false);
+  // State
+  const [isLoadingIntent, setIsLoadingIntent] = useState(true); // Block until IDB read completes
   const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [hasProcessed, setHasProcessed] = useState(false);
   
-  // Refs to prevent double processing
+  // Refs
   const navigationDone = useRef(false);
-  const lastActivationId = useRef(-1);
+  const idbChecked = useRef(false);
 
-  // Capture deep-link from current URL (called on each activation)
-  // Note: This is intentionally called from effects to detect app activation
-  const captureDeepLink = useCallback(() => {
-    const currentPath = window.location.pathname;
-    const timestamp = new Date().toISOString();
-    console.log(`[DeepLink ${timestamp}] Checking URL (activationId: ${activationId}):`, currentPath);
+  // STEP 1: Read from IndexedDB on mount (the authoritative source)
+  useEffect(() => {
+    console.log('[CTX 1] DeepLinkContext mounted, reading from IDB...');
     
-    // 1. First, check if we already have a validated deep-link in storage
-    // This is our "Single Source of Truth" regarding intent
-    const storedPath = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
+    readDeepLinkFromIDB().then(idbPath => {
+      console.log('[CTX 2] IDB returned:', idbPath);
+      idbChecked.current = true;
+      
+      if (idbPath && isDeepLinkPath(idbPath)) {
+        console.log('[CTX 3] Valid deep link from IDB:', idbPath);
+        setPendingPath(idbPath);
+        // DON'T clear yet - wait until we actually navigate
+      } else {
+        console.log('[CTX 3] No valid deep link in IDB');
+        // Also check window.location as fallback (for direct URL access)
+        const currentPath = window.location.pathname;
+        console.log('[CTX 4] Checking window.location:', currentPath);
+        if (isDeepLinkPath(currentPath)) {
+          console.log('[CTX 5] Valid deep link from window.location:', currentPath);
+          setPendingPath(currentPath);
+        }
+      }
+      
+      setIsLoadingIntent(false);
+    });
     
-    if (storedPath && isDeepLinkPath(storedPath)) {
-        console.log(`[DeepLink] RESTORING INTENT from storage:`, storedPath);
-        // Ensure state matches storage
-        if (pendingPath !== storedPath) {
-             // eslint-disable-next-line react-hooks/set-state-in-effect
-             setPendingPath(storedPath);
-        }
-        return; // Intent is secured, stop checking window.location which might be stale/wrong
-    }
-
-    // 2. If no stored intent, check the current window location
-    if (isDeepLinkPath(currentPath)) {
-      console.log(`[DeepLink] capturing NEW deep-link from WINDOW:`, currentPath);
-      sessionStorage.setItem(PENDING_DEEPLINK_KEY, currentPath);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPendingPath(currentPath);
-    } else {
-        console.log(`[DeepLink] Window path is NOT a deep-link and no stored intent exists.`);
-    }
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  }, [activationId, pendingPath]);
-
-  // Ask Service Worker for any pending deep links (Handshake to fix cold start race)
-  const checkPendingDeepLink = useCallback(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.ready.then((registration) => {
-        if (registration.active) {
-            console.log('[DeepLink] Asking SW for pending deep links (Handshake)');
-            registration.active.postMessage({ type: 'CHECK_PENDING_DEEPLINK' });
-        }
-      });
-    }
+    // This effect runs only once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Detect app activation (pageshow handles iOS PWA resume better than visibilitychange)
-  useEffect(() => {
-    const handlePageShow = (event: PageTransitionEvent) => {
-      // persisted = true means page was restored from bfcache (back-forward cache)
-      // This is common on iOS PWA "resume"
-      console.log(`[DeepLink ${new Date().toISOString()}] PAGESHOW event. Persisted: ${event.persisted}`);
-      
-      // Reset state for new activation
-      console.log('[DeepLink] RESETTING STATE for new activation');
-      setHasProcessed(false);
-      navigationDone.current = false;
-      setActivationId(id => id + 1);
-      
-      // We need to capture immediately
-      captureDeepLink();
-      checkPendingDeepLink();
-    };
-
-    const handleVisibilityChange = () => {
-      console.log(`[DeepLink ${new Date().toISOString()}] Visibility change: ${document.visibilityState}`);
-      if (document.visibilityState === 'visible') {
-        console.log('[DeepLink] App became VISIBLE. Checking deep links...');
-        // Don't fully reset here - pageshow is more reliable for cold starts
-        // But do capture any new deep-link
-        captureDeepLink();
-        checkPendingDeepLink();
-      }
-    };
-
-    window.addEventListener('pageshow', handlePageShow);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    
-    // Initial capture on mount - these setState calls are intentional for activation detection
-
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    captureDeepLink();
-    checkPendingDeepLink();
-
-    setActivationId(1);
-
-    return () => {
-      window.removeEventListener('pageshow', handlePageShow);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [captureDeepLink, checkPendingDeepLink]);
-
-  // Listen for postMessage from service worker (foreground case)
+  // STEP 2: Listen for postMessage from SW (foreground/background cases)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'DEEP_LINK_NAVIGATION' && event.data?.url) {
         const targetUrl = event.data.url;
-        console.log('[DeepLink] Received postMessage:', targetUrl);
+        console.log('[CTX MSG] Received postMessage from SW:', targetUrl);
         
         const path = new URL(targetUrl, window.location.origin).pathname;
         
         // If already authenticated, navigate immediately
         if (user && !authLoading) {
-          console.log('[DeepLink] Navigating immediately:', path);
+          console.log('[CTX MSG] Navigating immediately:', path);
+          clearDeepLinkFromIDB(); // Clear since we're handling it
           navigate(path, { replace: true });
         } else {
-          // Store for later consumption
-          console.log('[DeepLink] Storing for later:', path);
-          sessionStorage.setItem(PENDING_DEEPLINK_KEY, path);
+          // Store for later consumption after auth
+          console.log('[CTX MSG] Storing for post-auth:', path);
           setPendingPath(path);
           setHasProcessed(false);
           navigationDone.current = false;
@@ -174,65 +167,60 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, authLoading, navigate]);
 
-  // Process pending deep-link after auth is ready
+  // STEP 3: Process pending deep-link after auth resolves
   useEffect(() => {
-    // Wait for auth to finish loading
+    // Wait for IDB check to complete
+    if (isLoadingIntent) {
+      console.log('[CTX PROC] Waiting for IDB check...');
+      return;
+    }
+    
+    // Wait for auth to finish
     if (authLoading) {
-      console.log('[DeepLink] Auth loading, waiting...');
+      console.log('[CTX PROC] Auth loading...');
       return;
     }
 
-    // Skip if already processed this activation
-    if (hasProcessed && lastActivationId.current === activationId) {
-    //   console.log('[DeepLink] Already processed for this activation, skipping.');
+    // Skip if already processed
+    if (hasProcessed) {
       return;
     }
 
-    console.log(`[DeepLink] Processing effect. User: ${!!user}, HasProcessed: ${hasProcessed}, Activation: ${activationId}, LastActivation: ${lastActivationId.current}`);
+    console.log(`[CTX PROC] Processing. User: ${!!user}, PendingPath: ${pendingPath}`);
 
-    // Mark this activation as being processed
-    lastActivationId.current = activationId;
-
-    // If no user, mark as processed (will redirect to login)
+    // If no user, mark as processed
     if (!user) {
-      console.log('[DeepLink] No user, marking as processed');
-
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+      console.log('[CTX PROC] No user, marking processed');
       setHasProcessed(true);
-
       setPendingPath(null);
       return;
     }
 
-    // Check for pending deep-link
-    const storedPath = sessionStorage.getItem(PENDING_DEEPLINK_KEY);
-    console.log(`[DeepLink] Check Stored Path: ${storedPath}, NavigationDone: ${navigationDone.current}`);
-    
-    if (storedPath && !navigationDone.current) {
-      console.log('[DeepLink] Processing stored deep-link:', storedPath);
-      sessionStorage.removeItem(PENDING_DEEPLINK_KEY);
+    // Navigate to pending path
+    if (pendingPath && !navigationDone.current) {
+      console.log('[CTX PROC] Navigating to:', pendingPath);
       navigationDone.current = true;
       
-      // Navigate to the deep-link path
-      if (location.pathname !== storedPath) {
-        console.log('[DeepLink] Navigating to:', storedPath);
-        navigate(storedPath, { replace: true });
+      // Clear from IDB since we're consuming it
+      clearDeepLinkFromIDB();
+      
+      if (location.pathname !== pendingPath) {
+        navigate(pendingPath, { replace: true });
       }
     }
     
-    // Mark as processed
-    console.log('[DeepLink] Deep-link processing complete for activation:', activationId);
-
+    console.log('[CTX PROC] Processing complete');
     setHasProcessed(true);
-
     setPendingPath(null);
-  }, [authLoading, user, hasProcessed, activationId, navigate, location.pathname]);
+  }, [isLoadingIntent, authLoading, user, hasProcessed, pendingPath, navigate, location.pathname]);
 
   // Derive context value
   const value: DeepLinkContextType = {
-    isDeepLinkPending: pendingPath !== null && !hasProcessed,
-    isDeepLinkResolved: !authLoading && hasProcessed,
+    isDeepLinkPending: isLoadingIntent || (pendingPath !== null && !hasProcessed),
+    isDeepLinkResolved: !isLoadingIntent && !authLoading && hasProcessed,
   };
+
+  console.log(`[CTX STATE] isLoadingIntent=${isLoadingIntent}, pending=${pendingPath}, processed=${hasProcessed}, resolved=${value.isDeepLinkResolved}`);
 
   return (
     <DeepLinkContext.Provider value={value}>
@@ -240,6 +228,3 @@ export function DeepLinkProvider({ children }: { children: React.ReactNode }) {
     </DeepLinkContext.Provider>
   );
 }
-
-
-

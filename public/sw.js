@@ -1,12 +1,88 @@
 // SplitEase Service Worker
-const DEEP_LINK_STORAGE_KEY = 'splitease_pending_deeplink';
+// IndexedDB for persistent deep-link storage that survives SW termination
 
+const DB_NAME = 'SplitEaseDeepLink';
+const DB_VERSION = 1;
+const STORE_NAME = 'pendingLinks';
+
+// Open or create the IndexedDB database
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+  });
+}
+
+// Save deep link to IndexedDB (survives SW termination)
+function saveDeepLink(url) {
+  console.log('[SW IDB] Saving deep link:', url);
+  return openDB().then(db => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      store.put(url, 'current');
+      tx.oncomplete = () => {
+        console.log('[SW IDB] Deep link saved successfully');
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }).catch(err => {
+    console.error('[SW IDB] Failed to save deep link:', err);
+  });
+}
+
+// Read deep link from IndexedDB
+function readDeepLink() {
+  return openDB().then(db => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const request = store.get('current');
+      request.onsuccess = () => {
+        console.log('[SW IDB] Read deep link:', request.result);
+        resolve(request.result || null);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }).catch(err => {
+    console.error('[SW IDB] Failed to read deep link:', err);
+    return null;
+  });
+}
+
+// Clear deep link from IndexedDB (after consumption)
+function clearDeepLink() {
+  return openDB().then(db => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      store.delete('current');
+      tx.oncomplete = () => {
+        console.log('[SW IDB] Deep link cleared');
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }).catch(err => {
+    console.error('[SW IDB] Failed to clear deep link:', err);
+  });
+}
+
+// Push notification handler
 self.addEventListener('push', function(event) {
-  console.log('[SW] Push Received', event);
+  console.log('[SW PUSH] Push Received');
   
   if (event.data) {
-    console.log('[SW] Push Data:', event.data.text());
     const data = event.data.json();
+    console.log('[SW PUSH] Data:', JSON.stringify(data));
     
     const options = {
       body: data.body,
@@ -16,52 +92,57 @@ self.addEventListener('push', function(event) {
         url: data.url
       }
     };
-
-    console.log('[SW] Showing Notification:', data.title, options);
     
     event.waitUntil(
       self.registration.showNotification(data.title, options)
     );
-  } else {
-    console.log('[SW] Push event has no data');
   }
 });
 
-
-// Store pending deep link to helper with cold-start race conditions
-let pendingDeepLink = null;
-
+// Message handler for client requests
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'CHECK_PENDING_DEEPLINK') {
-    if (pendingDeepLink) {
-      console.log('[SW] Client asked for pending link, sending:', pendingDeepLink);
-      event.source.postMessage({
-        type: 'DEEP_LINK_NAVIGATION',
-        url: pendingDeepLink
-      });
-      // Clear it after sending to prevent double-consumption
-      pendingDeepLink = null;
-    } else {
-      console.log('[SW] Client asked for pending link, but none found.');
-    }
+  console.log('[SW MSG] Received message:', event.data?.type);
+  
+  if (event.data && event.data.type === 'GET_PENDING_DEEPLINK') {
+    // Client is asking for any pending deep link
+    event.waitUntil(
+      readDeepLink().then(url => {
+        if (url) {
+          console.log('[SW MSG] Responding with pending link:', url);
+          event.source.postMessage({
+            type: 'DEEP_LINK_NAVIGATION',
+            url: url
+          });
+          // Clear after sending
+          return clearDeepLink();
+        } else {
+          console.log('[SW MSG] No pending link found');
+        }
+      })
+    );
+  } else if (event.data && event.data.type === 'CLEAR_DEEPLINK') {
+    // Client consumed the link, clear it
+    event.waitUntil(clearDeepLink());
   }
 });
 
+// Notification click handler
 self.addEventListener('notificationclick', function(event) {
   const deepLinkUrl = event.notification.data?.url || '/';
   const timestamp = new Date().toISOString();
-  console.log(`[SW ${timestamp}] Notification Clicked, deepLink:`, deepLinkUrl);
+  console.log(`[SW CLICK ${timestamp}] Notification clicked, deepLink: ${deepLinkUrl}`);
   event.notification.close();
-  
-  // Store for handshake
-  pendingDeepLink = deepLinkUrl;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      console.log(`[SW] Found ${clientList.length} clients`);
+    // STEP 1: ALWAYS save to IndexedDB FIRST (survives SW termination)
+    saveDeepLink(deepLinkUrl).then(() => {
+      console.log('[SW CLICK] Deep link persisted to IDB, now finding clients...');
+      
+      return clients.matchAll({ type: 'window', includeUncontrolled: true });
+    }).then(function(clientList) {
+      console.log(`[SW CLICK] Found ${clientList.length} clients`);
       
       if (clientList.length > 0) {
-        // Find if there's a focused client
         let focusedClient = null;
         let anyClient = clientList[0];
         
@@ -73,42 +154,38 @@ self.addEventListener('notificationclick', function(event) {
         }
 
         if (focusedClient) {
-          // Case 1: App is in FOREGROUND (user is looking at it)
-          console.log('[SW] App in FOREGROUND - using postMessage:', deepLinkUrl);
+          // FOREGROUND: Client is active and listening
+          console.log('[SW CLICK] FOREGROUND - postMessage to focused client');
           focusedClient.postMessage({
             type: 'DEEP_LINK_NAVIGATION',
             url: deepLinkUrl
           });
+          // Clear IDB since we delivered directly
+          clearDeepLink();
           return focusedClient.focus();
         } else {
-          // Case 2: App is in BACKGROUND (minimized but in memory)
-          console.log('[SW] App in BACKGROUND - using navigate() + postMessage:', deepLinkUrl);
+          // BACKGROUND: Client exists but not focused
+          console.log('[SW CLICK] BACKGROUND - navigate() + postMessage');
           return anyClient.navigate(deepLinkUrl).then(function(client) {
             if (client) {
               client.postMessage({
                 type: 'DEEP_LINK_NAVIGATION',
                 url: deepLinkUrl
               });
+              // Clear IDB since we delivered
+              clearDeepLink();
               return client.focus();
             }
           });
         }
       }
 
-      // Case 3: No window open (cold start)
-      // Open a new window with the deep link URL
-      console.log('[SW] COLD START - opening new window + postMessage:', deepLinkUrl);
-      return clients.openWindow(deepLinkUrl).then(function(client) {
-        if (client) {
-            // Send the intent explicitly to ensure it sticks even if OS restoration overrides location
-            client.postMessage({
-                type: 'DEEP_LINK_NAVIGATION',
-                url: deepLinkUrl
-            });
-        }
-      });
+      // COLD START: No clients exist
+      // IDB already has the link saved. Just open the window.
+      // The client will read from IDB on startup.
+      console.log('[SW CLICK] COLD START - opening window, link is in IDB');
+      return clients.openWindow(deepLinkUrl);
+      // DO NOT clear IDB here - client hasn't read it yet
     })
   );
 });
-
-
