@@ -5,6 +5,18 @@ const DB_NAME = 'SplitEaseDeepLink';
 const DB_VERSION = 1;
 const STORE_NAME = 'pendingLinks';
 
+// CRITICAL: Force new SW to take control immediately
+// This ensures the new SW with IndexedDB logic handles notification clicks
+self.addEventListener('install', (event) => {
+  console.log('[SW INSTALL] New SW installing, skipping wait');
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('[SW ACTIVATE] New SW activating, claiming all clients');
+  event.waitUntil(clients.claim());
+});
+
 // Open or create the IndexedDB database
 function openDB() {
   return new Promise((resolve, reject) => {
