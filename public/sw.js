@@ -40,6 +40,8 @@ function saveDeepLink(url) {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       store.put(url, 'current');
+      // Also save a timestamp to prove the click happened
+      store.put(new Date().toISOString(), 'lastClickTime');
       tx.oncomplete = () => {
         console.log('[SW IDB] Deep link saved successfully');
         resolve();

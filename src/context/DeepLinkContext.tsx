@@ -35,13 +35,25 @@ function readDeepLinkFromIDB(): Promise<string | null> {
     return new Promise<string | null>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
+      
+      // Read the deep link
       const request = store.get('current');
+      // Also read lastClickTime to verify SW ran
+      const lastClickRequest = store.get('lastClickTime');
+      
+      let deepLink: string | null = null;
+      
       request.onsuccess = () => {
-        const result = request.result || null;
-        console.log('[CTX IDB] Read result:', result);
-        resolve(result);
+        deepLink = request.result || null;
+        console.log('[CTX IDB] Read result:', deepLink);
       };
-      request.onerror = () => reject(request.error);
+      
+      lastClickRequest.onsuccess = () => {
+        console.log('[CTX IDB] Last SW click time:', lastClickRequest.result || 'never');
+      };
+      
+      tx.oncomplete = () => resolve(deepLink);
+      tx.onerror = () => reject(tx.error);
     });
   }).catch(err => {
     console.error('[CTX IDB] Failed to read:', err);
