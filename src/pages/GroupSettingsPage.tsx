@@ -1,7 +1,7 @@
 /* eslint-disable */
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info } from "lucide-react"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
 import { useGroupBalance } from "../hooks/useGroupBalance"
@@ -10,11 +10,12 @@ import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
+import { calculateGroupSpendingSummary, formatCentsToRupees } from "../utils/spendingInsights"
 
 export function GroupSettingsPage() {
     const { id } = useParams<{ id: string }>()
     const navigate = useNavigate()
-    const { groups, currentUser, refreshGroups } = useData()
+    const { groups, currentUser, refreshGroups, expenses } = useData()
     
     // Derived State
     const group = groups.find(g => g.id === id)
@@ -45,6 +46,17 @@ export function GroupSettingsPage() {
         setSimplifyDebts(enabled);
         localStorage.setItem(`simplify_debts_${group.id}`, String(enabled));
     };
+
+    // Calculate group spending summary (read-only analytics)
+    const spendingSummary = useMemo(() => {
+        if (!group) return null;
+        const members = group.members.map(m => ({
+            id: m.id,
+            userId: m.userId || undefined,
+            name: m.name,
+        }));
+        return calculateGroupSpendingSummary(expenses, group.id, members);
+    }, [group, expenses]);
 
     // Handlers
     const handleSaveName = async () => {
@@ -265,6 +277,28 @@ export function GroupSettingsPage() {
                             />
                         </button>
                     </div>
+                </div>
+
+                {/* Spending Stats (Read-Only Analytics) */}
+                <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
+                        <TrendingUp className="h-4 w-4" /> Spending Stats
+                    </h3>
+                    <div 
+                        className="bg-card border rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors"
+                        onClick={() => navigate(`/groups/${id}/spending`)}
+                    >
+                        <div>
+                            <p className="text-sm text-muted-foreground">Total Group Spend</p>
+                            <p className="text-lg font-bold">
+                                ₹{spendingSummary ? formatCentsToRupees(spendingSummary.totalSpendCents) : "0"}
+                            </p>
+                        </div>
+                        <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <p className="text-xs text-muted-foreground px-1">
+                        Tap to see spending breakdown by member
+                    </p>
                 </div>
 
                 {/* Actions Section */}
