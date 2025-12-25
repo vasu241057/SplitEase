@@ -74,3 +74,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/**
+ * iOS Auto-Zoom Prevention
+ * 
+ * iOS Safari/PWA auto-zooms when input font-size < 16px.
+ * This causes layout breaking on focus.
+ * 
+ * Fix: Ensure all inputs have at least 16px font-size on iOS.
+ * Using @supports (-webkit-touch-callout: none) to target iOS only.
+ */
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
