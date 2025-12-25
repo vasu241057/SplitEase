@@ -29,11 +29,25 @@ const EPSILON = 0.005; // 0.5 paise tolerance
  */
 function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
     
+    console.log('╔════════════════════════════════════════════════════════════════');
+    console.log('║ [SIMPLIFY_DEBTS] Starting Debt Simplification');
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log('║ INPUT BALANCES:');
+    balances.forEach(b => {
+        console.log(`║   ${b.userId}: ${b.balance.toFixed(2)} (${b.balance >= 0 ? 'CREDITOR' : 'DEBTOR'})`);
+    });
+    
     // 1. Validate Input (Sum must be ~0)
     const totalBalance = balances.reduce((sum, b) => sum + b.balance, 0);
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log(`║ TOTAL BALANCE SUM: ${totalBalance.toFixed(4)} (should be ~0)`);
+    
     if (Math.abs(totalBalance) > EPSILON) {
+       console.log(`║ ❌ ERROR: Sum is ${totalBalance}, expected 0!`);
+       console.log('╚════════════════════════════════════════════════════════════════');
        throw new Error(`Invalid balances: Sum is ${totalBalance}, expected 0.`);
     }
+    console.log('║ ✓ Balance sum validation passed');
 
     // 2. Separate into Debtors and Creditors & Filter zeros
     // We work with PAISE (sub-units) to avoid floating point issues during the loop
@@ -56,6 +70,12 @@ function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
         }
     });
 
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log('║ DEBTORS (people who owe money):');
+    debtors.forEach(d => console.log(`║   ${d.userId}: ${d.amount} paise (₹${(d.amount/100).toFixed(2)})`));
+    console.log('║ CREDITORS (people who are owed money):');
+    creditors.forEach(c => console.log(`║   ${c.userId}: ${c.amount} paise (₹${(c.amount/100).toFixed(2)})`));
+
     // 3. Sort Deterministically
     // Primary: Amount (Descending) - Greedy approach
     // Secondary: ID (Ascending) - Consistency
@@ -69,11 +89,19 @@ function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
     debtors.sort(sortFn);
     creditors.sort(sortFn);
 
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log('║ AFTER SORTING (by amount DESC, then ID ASC):');
+    console.log('║ Debtors:', debtors.map(d => `${d.userId}:${d.amount}`).join(', '));
+    console.log('║ Creditors:', creditors.map(c => `${c.userId}:${c.amount}`).join(', '));
+
     const results: SimplifiedDebt[] = [];
 
     // 4. Greedy Match
     let debtorIdx = 0;
     let creditorIdx = 0;
+
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log('║ GREEDY MATCHING:');
 
     while (debtorIdx < debtors.length && creditorIdx < creditors.length) {
         const debtor = debtors[debtorIdx];
@@ -81,6 +109,9 @@ function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
 
         // The amount to settle is the minimum of what is owed vs what is owed to creditor
         const amountPaise = Math.min(debtor.amount, creditor.amount);
+
+        console.log(`║   Match: ${debtor.userId} (owes ${debtor.amount}p) → ${creditor.userId} (owed ${creditor.amount}p)`);
+        console.log(`║          Transfer: ${amountPaise} paise (₹${(amountPaise/100).toFixed(2)})`);
 
         // Record valid transaction
         if (amountPaise > 0) {
@@ -95,10 +126,17 @@ function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
         debtor.amount -= amountPaise;
         creditor.amount -= amountPaise;
 
+        console.log(`║          After: debtor=${debtor.amount}p, creditor=${creditor.amount}p`);
+
         // Move pointers if settled
         if (debtor.amount === 0) debtorIdx++;
         if (creditor.amount === 0) creditorIdx++;
     }
+
+    console.log('╠════════════════════════════════════════════════════════════════');
+    console.log('║ SIMPLIFIED DEBTS RESULT:');
+    results.forEach(r => console.log(`║   ${r.from} → ${r.to}: ₹${r.amount.toFixed(2)}`));
+    console.log('╚════════════════════════════════════════════════════════════════');
 
     return results;
 }
