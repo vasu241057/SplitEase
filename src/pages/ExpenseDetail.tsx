@@ -148,7 +148,7 @@ export function ExpenseDetail() {
       setIsDeleting(true)
       await deleteExpense(expense.id)
       navigate(-1)
-    } catch (error) {
+    } catch (_error) {
        setIsDeleting(false)
     }
   }
@@ -158,7 +158,7 @@ export function ExpenseDetail() {
       setIsRestoring(true)
       await restoreExpense(expense.id)
       navigate(-1)
-    } catch (error) {
+    } catch (_error) {
        setIsRestoring(false)
     }
   }

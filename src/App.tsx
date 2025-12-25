@@ -80,18 +80,15 @@ const SmartHomeRedirect = () => {
   
   // If we already navigated to a deep link, don't redirect to /friends
   if (navigatedToDeepLink) {
-    console.log('[SmartHomeRedirect] Already navigated to deep link, returning null');
     return null;
   }
   
   // If deep-link is pending or not resolved, show skeleton instead of redirecting
   if (!isDeepLinkResolved || isDeepLinkPending) {
-    console.log(`[SmartHomeRedirect] Blocking redirect. Resolved: ${isDeepLinkResolved}, Pending: ${isDeepLinkPending}`);
     return <AppLoadingSkeleton />;
   }
   
   // Deep-link resolved, safe to redirect to /friends
-  console.log('[SmartHomeRedirect] Deep-link resolved, redirecting to /friends');
   return <Navigate to="/friends" replace />;
 };
 
@@ -124,7 +121,6 @@ function AppRoutes() {
         
         <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
           <Route path="/invite-friend" element={<InviteFriend />} />
-          {/* CRITICAL: Use SmartHomeRedirect instead of Navigate */}
           <Route path="/" element={<SmartHomeRedirect />} />
           <Route path="/settle-up" element={<SettleUp />} />
           <Route path="/create-group" element={<CreateGroup />} />
@@ -158,17 +154,12 @@ function AppRoutes() {
   )
 }
 
-// Main App component wraps everything with DeepLinkProvider
-import { DebugConsole } from "./components/DebugConsole";
-
 function App() {
   return (
     <DeepLinkProvider>
       <AppRoutes />
-      <DebugConsole />
     </DeepLinkProvider>
   );
 }
 
 export default App
-

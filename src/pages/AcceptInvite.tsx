@@ -24,7 +24,7 @@ export function AcceptInvite() {
         // Actually, our backend route /invite/:code is public (no authMiddleware).
         const data = await api.get(`/api/user/invite/${code}`);
         setSender(data);
-      } catch (err) {
+      } catch (_err) {
         setError('Invalid or expired invite link.');
       } finally {
         setLoading(false);

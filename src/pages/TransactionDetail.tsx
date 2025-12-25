@@ -74,7 +74,7 @@ export function TransactionDetail() {
       setIsDeleting(true)
       await deleteTransaction(transaction.id)
       navigate(-1)
-    } catch (error) {
+    } catch (_error) {
       setIsDeleting(false)
     }
   }
@@ -84,7 +84,7 @@ export function TransactionDetail() {
       setIsRestoring(true)
       await restoreTransaction(transaction.id)
       navigate(-1)
-    } catch (error) {
+    } catch (_error) {
        setIsRestoring(false)
     }
   }
