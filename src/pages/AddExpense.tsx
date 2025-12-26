@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { cn } from "../utils/cn"
+import { matchesMember } from "../utils/groupBalanceUtils"
 import type { Friend, Group } from "../types"
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 // 3: Payer Select, 4: Split Method, 5: Multi-Payer, 6: Uneven Split, 7: Percentage Split
@@ -59,11 +60,16 @@ export function AddExpense() {
        // Set Group
        if (editExp.groupId) {
           const grp = groups.find(g => g.id === editExp.groupId)
-          if (grp) setSelectedGroup(grp)
+          if (grp) {
+            setSelectedGroup(grp)
+          } else {
+            console.warn('[EditExpense] groupId not found in groups:', editExp.groupId);
+          }
        }
        
        // Set Friends (derive from splits who are NOT group members and NOT current user)
        const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members.filter(m => m.userId !== currentUser.id).map(m => m.id) || []) : []
+       
        const friendIds = editExp.splits
           .map((s: any) => s.userId)
           .filter((uid: string) => {
@@ -91,26 +97,75 @@ export function AddExpense() {
        const friendsToSelect = friends.filter(f => friendIds.includes(f.id) || (f.linked_user_id && friendIds.includes(f.linked_user_id)))
        setSelectedFriends(friendsToSelect)
        
-       // Set Payers
-       const payers = editExp.splits.filter((s: any) => s.paidAmount > 0).map((s: any) => s.userId)
-       setGroupPayers(payers)
+       // ID NORMALIZATION: Map split userIds to member IDs
+       // The expense splits use userIds that may not match group member IDs.
+       // We need to normalize them to the IDs that activeMembers will use.
        
-       const payerAmts: Record<string, string> = {}
+       // Build a mapping from split userId -> normalized member ID
+       // Priority: 1) Match group member, 2) Match friend, 3) Current user, 4) Use as-is
+       const grp = editExp.groupId ? groups.find(g => g.id === editExp.groupId) : null;
+       
+       const normalizeSplitUserId = (splitUserId: string): string => {
+         // Check if it's the current user
+         if (splitUserId === currentUser.id) {
+           return currentUser.id;
+         }
+         
+         // Check group members using matchesMember
+         if (grp) {
+           const member = grp.members.find(m => matchesMember(splitUserId, { id: m.id, userId: m.userId || undefined }));
+           if (member) {
+             return member.id; // Return the member's ID (what activeMembers uses)
+           }
+         }
+         
+         // Check friends
+         const friend = friends.find(f => f.id === splitUserId || f.linked_user_id === splitUserId);
+         if (friend) {
+           return friend.id;
+         }
+         
+         // Fallback: use as-is (should not happen for valid data)
+         console.warn('[EditExpense] Could not normalize userId:', splitUserId);
+         return splitUserId;
+       };
+       
+       // Set Payers with normalized IDs
+       const normalizedPayerMap: Record<string, { originalId: string, paidAmount: number }> = {};
        editExp.splits.forEach((s: any) => {
-          if (s.paidAmount > 0) payerAmts[s.userId] = s.paidAmount.toString()
-       })
-       setPayerAmounts(payerAmts)
+         if (s.paidAmount > 0) {
+           const normalizedId = normalizeSplitUserId(s.userId);
+           normalizedPayerMap[normalizedId] = { originalId: s.userId, paidAmount: s.paidAmount };
+         }
+       });
        
-       // Set Split Members
-       const splitters = editExp.splits.filter((s: any) => s.amount > 0).map((s: any) => s.userId)
-       setGroupSplitMembers(splitters)
+       const normalizedPayers = Object.keys(normalizedPayerMap);
+       setGroupPayers(normalizedPayers);
+       
+       const payerAmts: Record<string, string> = {};
+       Object.entries(normalizedPayerMap).forEach(([normalizedId, data]) => {
+         payerAmts[normalizedId] = data.paidAmount.toString();
+       });
+       setPayerAmounts(payerAmts);
+       
+       // Set Split Members with normalized IDs
+       const normalizedSplitterMap: Record<string, { originalId: string, amount: number }> = {};
+       editExp.splits.forEach((s: any) => {
+         if (s.amount > 0) {
+           const normalizedId = normalizeSplitUserId(s.userId);
+           normalizedSplitterMap[normalizedId] = { originalId: s.userId, amount: s.amount };
+         }
+       });
+       
+       const normalizedSplitters = Object.keys(normalizedSplitterMap);
+       setGroupSplitMembers(normalizedSplitters);
 
        // Determine Split Mode and Pre-fill amounts
        // Check if split is roughly equal
        const totalAmount = parseFloat(editExp.amount.toString())
-       const equalShare = totalAmount / splitters.length
+       const equalShare = totalAmount / normalizedSplitters.length
        // Allow small float diff (0.01)
-       const isRoughlyEqual = editExp.splits.filter((s: any) => s.amount > 0).every((s: any) => Math.abs(s.amount - equalShare) < 0.1)
+       const isRoughlyEqual = Object.values(normalizedSplitterMap).every(data => Math.abs(data.amount - equalShare) < 0.1)
 
        if (isRoughlyEqual) {
            setSplitMode('equally')
@@ -118,13 +173,12 @@ export function AddExpense() {
            // Default to uneven for now if not equal
            setSplitMode('unequally')
            const sAmts: Record<string, string> = {}
-           editExp.splits.forEach((s: any) => {
-               if (s.amount > 0) sAmts[s.userId] = s.amount.toString()
-           })
+           Object.entries(normalizedSplitterMap).forEach(([normalizedId, data]) => {
+             sAmts[normalizedId] = data.amount.toString();
+           });
            setSplitAmounts(sAmts)
        }
        
-       setStep(2)
        setStep(2)
        return // Skip default init
     }

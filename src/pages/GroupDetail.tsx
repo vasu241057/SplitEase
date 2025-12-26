@@ -82,93 +82,53 @@ export function GroupDetail() {
   const netBalances = useMemo<MemberBalance[]>(() => {
     if (!group) return [];
     
-    console.log('╔════════════════════════════════════════════════════════════════');
-    console.log('║ [NET_BALANCES] Calculating Net Balances for Group:', group.name);
-    console.log('╠════════════════════════════════════════════════════════════════');
-    
     const balances = new Map<string, number>();
     group.members.forEach(m => balances.set(m.id, 0));
 
-    console.log('║ MEMBERS:', group.members.map(m => `${m.name}(${m.id.slice(0,8)})`).join(', '));
-    console.log('╠════════════════════════════════════════════════════════════════');
-    console.log('║ PROCESSING EXPENSES:');
-
     // Expenses
     groupExpenses.forEach(exp => {
-        console.log('║ ────────────────────────────────────────────────────────────');
-        console.log(`║ Expense: "${exp.description}" - ₹${exp.amount}`);
-        console.log(`║   Payer ID: ${exp.payerId}`);
-        console.log(`║   Splits:`, exp.splits.map(s => `${s.userId?.slice(0,8)}:₹${s.amount}(paid:₹${s.paidAmount || 0})`).join(', '));
-        
         // Check if multi-payer
         const payers = exp.splits.filter(s => (s.paidAmount || 0) > 0);
         const isMultiPayer = payers.length > 1;
-        console.log(`║   Multi-payer: ${isMultiPayer ? 'YES (' + payers.length + ' payers)' : 'NO'}`);
         
         if (isMultiPayer) {
             // MULTI-PAYER: Each payer gets credit for what they paid
-            console.log('║   [MULTI-PAYER MODE]');
             exp.splits.forEach(split => {
                 const member = group.members.find(m => matchesMember(split.userId, { id: m.id, userId: m.userId || undefined }));
                 if (member && (split.paidAmount || 0) > 0) {
                     const before = balances.get(member.id) || 0;
                     balances.set(member.id, before + (split.paidAmount || 0));
-                    console.log(`║     ${member.name} PAID ₹${split.paidAmount} → balance: ${before.toFixed(2)} → ${(before + (split.paidAmount || 0)).toFixed(2)}`);
                 }
             });
         } else {
             // SINGLE PAYER: Original logic
-            console.log('║   [SINGLE-PAYER MODE]');
             const payerMember = group.members.find(m => matchesMember(exp.payerId, { id: m.id, userId: m.userId || undefined }));
             if (payerMember) {
                 const before = balances.get(payerMember.id) || 0;
                 balances.set(payerMember.id, before + exp.amount);
-                console.log(`║     ${payerMember.name} PAID ₹${exp.amount} → balance: ${before.toFixed(2)} → ${(before + exp.amount).toFixed(2)}`);
-            } else {
-                console.log(`║     ⚠️ Payer not found in group!`);
             }
         }
 
         // Splits (deduct share from each participant)
-        console.log('║   Deducting shares:');
         exp.splits.forEach(split => {
              const splitMember = group.members.find(m => matchesMember(split.userId, { id: m.id, userId: m.userId || undefined }));
              if (splitMember) {
                  const before = balances.get(splitMember.id) || 0;
                  balances.set(splitMember.id, before - (split.amount || 0));
-                 console.log(`║     ${splitMember.name} OWES ₹${split.amount} → balance: ${before.toFixed(2)} → ${(before - (split.amount || 0)).toFixed(2)}`);
              }
         });
     });
-
-    console.log('╠════════════════════════════════════════════════════════════════');
-    console.log('║ PROCESSING TRANSACTIONS (settle-ups):');
 
     // Transactions
     groupTransactions.forEach(tx => {
         const fromMember = group.members.find(m => matchesMember(tx.fromId, { id: m.id, userId: m.userId || undefined }));
         const toMember = group.members.find(m => matchesMember(tx.toId, { id: m.id, userId: m.userId || undefined }));
 
-        console.log(`║   ${fromMember?.name || tx.fromId} → ${toMember?.name || tx.toId}: ₹${tx.amount}`);
-
         if (fromMember) balances.set(fromMember.id, (balances.get(fromMember.id) || 0) + tx.amount);
         if (toMember) balances.set(toMember.id, (balances.get(toMember.id) || 0) - tx.amount);
     });
 
-    console.log('╠════════════════════════════════════════════════════════════════');
-    console.log('║ FINAL NET BALANCES:');
-    const result = Array.from(balances.entries()).map(([userId, balance]) => {
-        const member = group.members.find(m => m.id === userId);
-        console.log(`║   ${member?.name || userId}: ₹${balance.toFixed(2)} (${balance >= 0 ? 'CREDITOR' : 'DEBTOR'})`);
-        return { userId, balance };
-    });
-    
-    const sum = result.reduce((s, b) => s + b.balance, 0);
-    console.log('╠════════════════════════════════════════════════════════════════');
-    console.log(`║ SUM CHECK: ${sum.toFixed(4)} (should be ~0)`);
-    console.log('╚════════════════════════════════════════════════════════════════');
-
-    return result;
+    return Array.from(balances.entries()).map(([userId, balance]) => ({ userId, balance }));
   }, [group, groupExpenses, groupTransactions]);
 
   // Derived Simplified Debts
@@ -623,14 +583,6 @@ export function GroupDetail() {
                     
                     let balance = 0;
 
-
-                     console.log('┌──────────────────────────────────────────────────────────────');
-                     console.log('│ [SETTLE-UP MODAL] Balance Calculation (FIXED)');
-                     console.log('│ Member:', member.name);
-                     console.log('│ Current User ID:', currentUser.id);
-                     console.log('│ My Member Record ID (friend_id):', myMemberRecord?.id);
-                     console.log('│ isMember checks: member.id=', member.id, ', member.userId=', member.userId);
-
                      const meRef: GroupMember = {
                         id: myMemberRecord?.id || currentUser.id,
                         userId: currentUser.id
@@ -677,9 +629,6 @@ export function GroupDetail() {
                             }
                         });
                      }
-
-                     console.log('│ SETTLE-UP BALANCE:', balance);
-                     console.log('└──────────────────────────────────────────────────────────────');
 
                      const isOwe = balance < 0;
                      const amount = Math.abs(balance).toFixed(2);
