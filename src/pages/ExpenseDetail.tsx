@@ -34,24 +34,36 @@ export function ExpenseDetail() {
 
   // Helper functions must be defined before use if used in useMemo or other hooks
   const getMemberName = (id: string) => {
-    // 1. Check Current User
+    // 1. Check Current User (direct match)
     if (id === "currentUser" || id === currentUser.id) return "You"
     
-    // 2. Check Friends List
-    const friend = friends?.find(f => f.id === id || f.linked_user_id === id)
-    if (friend) return friend.name
+    // 2. Check if this ID refers to current user via group membership
+    if (expense?.groupId) {
+        const group = groups.find(g => g.id === expense.groupId)
+        const memberForId = group?.members.find(m => m.id === id || m.userId === id)
+        if (memberForId?.userId === currentUser.id) {
+            return "You"
+        }
+    }
     
-    // 3. Check Group Members (if expense belongs to a group)
+    // 3. Check Friends List
+    const friend = friends?.find(f => f.id === id || f.linked_user_id === id)
+    if (friend) {
+        if (friend.linked_user_id === currentUser.id) {
+            return "You"
+        }
+        return friend.name
+    }
+    
+    // 4. Check Group Members (if expense belongs to a group)
     if (expense?.groupId) {
         const group = groups.find(g => g.id === expense.groupId)
         const member = group?.members.find(m => m.id === id || m.userId === id)
         if (member) {
-            console.log(`[ExpenseDetail] Resolved ${id} via Group ${group?.name}: ${member.name}`)
             return member.name
         }
     }
 
-    console.warn(`[ExpenseDetail] Failed to resolve name for ${id}`)
     return "Unknown"
   }
   
@@ -81,7 +93,9 @@ export function ExpenseDetail() {
     return payers.length === 1 && payers[0]
     ? `${getMemberName(payers[0].userId)} paid ₹${expense.amount}`
     : `${payers.length} people paid ₹${expense.amount}`
-  }, [payers, expense?.amount]) 
+  }, [payers, expense?.amount])
+
+
 
   // --- Conditional Returns AFTER all hooks ---
 
@@ -231,6 +245,17 @@ export function ExpenseDetail() {
                    const name = getMemberName(split.userId)
                    const avatar = getMemberAvatar(split.userId)
                    
+                   // Determine if this is a ghost/former member
+                   // For GROUP expenses: ghost = not in current group members (regardless of friend status)
+                   // For non-group expenses: ghost = not in friends
+                   let isGhost = false;
+                   
+                   if (expense?.groupId) {
+                     const group = groups.find(g => g.id === expense.groupId);
+                     const foundInGroup = group?.members.some((m: any) => m.id === split.userId || m.userId === split.userId);
+                     isGhost = !foundInGroup && split.userId !== currentUser.id;
+                   }
+                   
                    const net = (split.paidAmount || 0) - split.amount
                    let statusText = ""
                    let statusColor = ""
@@ -254,7 +279,10 @@ export function ExpenseDetail() {
                                <AvatarFallback>{name[0]}</AvatarFallback>
                             </Avatar>
                             <div className="flex flex-col">
-                               <span className="font-medium text-sm">{name}</span>
+                               <span className="font-medium text-sm">
+                                 {name}
+                                 {isGhost && <span className="text-[10px] text-muted-foreground font-normal ml-1">(Former Member)</span>}
+                               </span>
                                <span className="text-xs text-muted-foreground">
                                   Paid ₹{split.paidAmount || 0} • Share ₹{split.amount}
                                </span>

@@ -8,6 +8,7 @@ export type User = {
 export type Friend = User & {
   balance: number // +ve means they owe you, -ve means you owe them
   linked_user_id?: string
+  isGhost?: boolean
 }
 
 export type GroupMember = {
@@ -15,6 +16,7 @@ export type GroupMember = {
   name: string;
   avatar: string; // now mandatory in return (can be empty string)
   userId: string | null; // linked_user_id
+  isGhost?: boolean;
 }
 
 export type Group = {
@@ -45,6 +47,7 @@ export type Expense = {
   category?: string
   notes?: string
   deleted?: boolean
+  splitMode?: "equally" | "unequally" | "percentage"
 }
 
 export type Transaction = {

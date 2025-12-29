@@ -335,7 +335,7 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { description, amount, date, payerId, splits, groupId } = req.body;
+  const { description, amount, date, payerId, splits, groupId, splitMode } = req.body;
   const supabase = createSupabaseClient();
 
   // === FIX: Validate expense integrity (same as POST) ===
@@ -369,51 +369,44 @@ router.put('/:id', async (req, res) => {
   }
   // === END validation ===
 
-
-  const { error: expenseError } = await supabase
-    .from('expenses')
-    .update({
-      description,
-      amount,
-      date,
-      payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
-      payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
-      group_id: groupId
-    })
-    .eq('id', id);
-
-  if (expenseError) return res.status(500).json({ error: expenseError.message });
-
-  // ...
+  // Prepare Splits for RPC
+  // Logic matches create: Resolve IDs (currentUser -> ID, friend mapping etc handled by caller mostly, 
+  // but here we might need to resolve 'currentUser' string if passed?)
+  // The frontend usually passes resolved logic but let's be safe and replicate the resolution.
   
-  const { error: deleteError } = await supabase
-    .from('expense_splits')
-    .delete()
-    .eq('expense_id', id);
-
-  if (deleteError) return res.status(500).json({ error: deleteError.message });
-
-  const splitInserts = await Promise.all(splits.map(async (s: any) => ({
-    expense_id: id,
-    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
+  // NOTE: isProfileId is async, need Promise.all
+  const preparedSplits = await Promise.all(splits.map(async (s: any) => ({
     user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
+    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
     amount: s.amount,
     paid_amount: s.paidAmount || 0,
     paid: s.paid || false
   })));
-  
-  const { error: splitError } = await supabase
-    .from('expense_splits')
-    .insert(splitInserts);
-    
-  if (splitError) return res.status(500).json({ error: splitError.message });
+
+  const rpcParams = {
+    p_expense_id: id,
+    p_description: description,
+    p_amount: amount,
+    p_date: date,
+    p_payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
+    p_payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
+    p_group_id: groupId,
+    p_split_mode: splitMode || null, // Allow null for backward compat
+    p_splits: preparedSplits
+  };
+
+  const { error: rpcError } = await supabase.rpc('update_expense_with_splits', rpcParams);
+
+  if (rpcError) {
+    return res.status(500).json({ error: rpcError.message });
+  }
 
   await recalculateBalances(supabase);
 
   // Notify
   await notifyExpenseParticipants(req, id, 'updated an expense', `${description} was updated`);
 
-  res.json({ id, description, amount, date, payerId, splits, groupId });
+  res.json({ id, description, amount, date, payerId, splits, groupId, splitMode });
 });
 
 router.delete('/:id', async (req, res) => {

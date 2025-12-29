@@ -95,7 +95,35 @@ export function AddExpense() {
           })
        
        const friendsToSelect = friends.filter(f => friendIds.includes(f.id) || (f.linked_user_id && friendIds.includes(f.linked_user_id)))
-       setSelectedFriends(friendsToSelect)
+       
+       // GHOST USER HANDLING: Identify participants who are NOT in groups/friends
+       const foundIds = new Set<string>();
+       friendsToSelect.forEach(f => {
+           foundIds.add(f.id);
+           if (f.linked_user_id) foundIds.add(f.linked_user_id);
+       });
+       
+       const missingIds = friendIds.filter((uid: string) => 
+           !foundIds.has(uid) && 
+           !groupMemberIds.includes(uid) && 
+           uid !== currentUser.id
+       );
+
+       if (missingIds.length > 0) {
+           console.log('[AddExpense] Found Ghost Users:', missingIds);
+           const ghostFriends = missingIds.map((uid: string) => ({
+               id: uid,
+               name: "Deleted User", 
+               email: "",
+               balance: 0, 
+               avatar: undefined,
+               isGhost: true 
+           } as Friend)); 
+           
+           setSelectedFriends([...friendsToSelect, ...ghostFriends]);
+       } else {
+           setSelectedFriends(friendsToSelect);
+       }
        
        // ID NORMALIZATION: Map split userIds to member IDs
        // The expense splits use userIds that may not match group member IDs.
@@ -161,22 +189,46 @@ export function AddExpense() {
        setGroupSplitMembers(normalizedSplitters);
 
        // Determine Split Mode and Pre-fill amounts
-       // Check if split is roughly equal
-       const totalAmount = parseFloat(editExp.amount.toString())
-       const equalShare = totalAmount / normalizedSplitters.length
-       // Allow small float diff (0.01)
-       const isRoughlyEqual = Object.values(normalizedSplitterMap).every(data => Math.abs(data.amount - equalShare) < 0.1)
-
-       if (isRoughlyEqual) {
-           setSplitMode('equally')
+       if (editExp.splitMode) {
+           setSplitMode(editExp.splitMode);
+           
+           if (editExp.splitMode === 'unequally') {
+               const sAmts: Record<string, string> = {}
+               Object.entries(normalizedSplitterMap).forEach(([normalizedId, data]) => {
+                 sAmts[normalizedId] = data.amount.toString();
+               });
+               setSplitAmounts(sAmts)
+           } else if (editExp.splitMode === 'percentage') {
+               // We need to reverse calculate percentages or rely on what IS saved?
+               // The DB doesn't save percentages separately on the Split object, only Amounts.
+               // So we must calculate: (Amount / Total) * 100.
+               const total = parseFloat(editExp.amount.toString());
+               const sPcts: Record<string, string> = {};
+               Object.entries(normalizedSplitterMap).forEach(([normalizedId, data]) => {
+                   const pct = (data.amount / total) * 100;
+                   // Round to reasonable decimal
+                   sPcts[normalizedId] = parseFloat(pct.toFixed(2)).toString(); // Remove trailing zeros
+               });
+               setSplitPercentages(sPcts);
+           }
+           
        } else {
-           // Default to uneven for now if not equal
-           setSplitMode('unequally')
-           const sAmts: Record<string, string> = {}
-           Object.entries(normalizedSplitterMap).forEach(([normalizedId, data]) => {
-             sAmts[normalizedId] = data.amount.toString();
-           });
-           setSplitAmounts(sAmts)
+           // Fallback Heuristic
+           const totalAmount = parseFloat(editExp.amount.toString())
+           const equalShare = totalAmount / normalizedSplitters.length
+           // Allow small float diff (0.01)
+           const isRoughlyEqual = Object.values(normalizedSplitterMap).every(data => Math.abs(data.amount - equalShare) < 0.1)
+
+           if (isRoughlyEqual) {
+               setSplitMode('equally')
+           } else {
+               setSplitMode('unequally')
+               const sAmts: Record<string, string> = {}
+               Object.entries(normalizedSplitterMap).forEach(([normalizedId, data]) => {
+                 sAmts[normalizedId] = data.amount.toString();
+               });
+               setSplitAmounts(sAmts)
+           }
        }
        
        setStep(2)
@@ -247,7 +299,7 @@ export function AddExpense() {
   }
 
   const getMemberDetails = (id: string) => {
-    if (id === currentUser.id) return { name: "You", avatar: currentUser.avatar }
+    if (id === currentUser.id) return { name: "You", avatar: currentUser.avatar, isGhost: false }
     
     // Check Selected Group first (it has rich member data)
     if (selectedGroup) {
@@ -256,7 +308,13 @@ export function AddExpense() {
     }
 
     const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-    return friend || { name: "Unknown", avatar: undefined }
+    if (friend) return friend
+    
+    // Check for Ghost User in selectedFriends
+    const ghost = selectedFriends.find(f => f.id === id)
+    if (ghost) return ghost
+
+    return { name: "Unknown", avatar: undefined, isGhost: false }
   }
 
   const handleSave = async () => {
@@ -493,7 +551,8 @@ export function AddExpense() {
               amount: numAmount,
               payerId,
               splits,
-              groupId: selectedGroup ? selectedGroup.id : undefined
+              groupId: selectedGroup ? selectedGroup.id : undefined,
+              splitMode
            })
         } else {
            await addExpense({
@@ -501,7 +560,8 @@ export function AddExpense() {
              amount: numAmount,
              payerId,
              splits,
-             groupId: selectedGroup ? selectedGroup.id : undefined
+             groupId: selectedGroup ? selectedGroup.id : undefined,
+             splitMode
            })
         }
 
@@ -853,8 +913,9 @@ export function AddExpense() {
                           <AvatarImage src={member.avatar} />
                           <AvatarFallback>{member.name[0]}</AvatarFallback>
                         </Avatar>
-                        <span className="font-medium">{member.name}</span>
-                      </div>
+                         <span className="font-medium">{member.name}</span>
+                         {member.isGhost && <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground ml-2">Former Member</span>}
+                       </div>
                       {groupPayers.includes(memberId) && groupPayers.length === 1 && <Check className="h-5 w-5 text-primary" />}
                     </div>
                   )
@@ -947,8 +1008,9 @@ export function AddExpense() {
                                     <AvatarImage src={member.avatar} />
                                     <AvatarFallback>{member.name[0]}</AvatarFallback>
                                     </Avatar>
-                                    <span className="font-medium">{member.name}</span>
-                                </div>
+                                     <span className="font-medium">{member.name}</span>
+                                     {member.isGhost && <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground ml-2">Former Member</span>}
+                                 </div>
                                 {isIncluded ? <Check className="h-5 w-5 text-primary" /> : <div className="h-5 w-5 border rounded-full" />}
                                 </div>
                             )
@@ -973,7 +1035,7 @@ export function AddExpense() {
                                             <AvatarFallback>{member.name[0]}</AvatarFallback>
                                         </Avatar>
                                         <div className="flex-1">
-                                            <p className="text-sm font-medium">{member.name}</p>
+                                            <p className="text-sm font-medium">{member.name} {member.isGhost && <span className="text-[10px] text-muted-foreground font-normal ml-1">(Former Member)</span>}</p>
                                         </div>
                                         <div className="relative w-32">
                                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">₹</span>
@@ -1015,7 +1077,7 @@ export function AddExpense() {
                                             <AvatarFallback>{member.name[0]}</AvatarFallback>
                                         </Avatar>
                                         <div className="flex-1">
-                                            <p className="text-sm font-medium">{member.name}</p>
+                                            <p className="text-sm font-medium">{member.name} {member.isGhost && <span className="text-[10px] text-muted-foreground font-normal ml-1">(Former Member)</span>}</p>
                                         </div>
                                         <div className="relative w-32">
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">%</span>
@@ -1109,7 +1171,7 @@ export function AddExpense() {
                           <AvatarFallback>{member.name[0]}</AvatarFallback>
                         </Avatar>
                         <div className="flex-1">
-                           <p className="text-sm font-medium">{member.name}</p>
+                           <p className="text-sm font-medium">{member.name} {member.isGhost && <span className="text-[10px] text-muted-foreground font-normal ml-1">(Former Member)</span>}</p>
                         </div>
                         <div className="relative w-32">
                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">₹</span>

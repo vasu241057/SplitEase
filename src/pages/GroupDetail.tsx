@@ -398,9 +398,56 @@ export function GroupDetail() {
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {new Date(expense.date).toLocaleDateString()} •{" "}
-                            {expense.payerId === currentUser.id
-                              ? "You paid"
-                              : `${getMemberName(expense.payerId)} paid`}
+                            {(() => {
+                              // Find the current user's member record in this group
+                              // This is needed because split.userId may contain the friend_id (how others see us)
+                              // rather than the auth user_id
+                              const myMemberRecord = group.members.find(
+                                (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+                              );
+                              
+                              // Create a GroupMember ref with BOTH IDs for proper matching:
+                              // - id: friend_id (how others see us in the group)
+                              // - userId: auth user_id (our actual user ID)
+                              const meRef: GroupMember = { 
+                                id: myMemberRecord?.id || currentUser.id, 
+                                userId: currentUser.id 
+                              };
+
+                              // Check if user is involved in this expense using proper member matching
+                              // BUG FIX: Previously used s.userId === currentUser.id which fails when
+                              // split.userId is a friend_id and currentUser.id is the auth user_id
+                              const isUserPayer = matchesMember(expense.payerId, meRef) ||
+                                expense.splits.some(s => matchesMember(s.userId, meRef) && (s.paidAmount || 0) > 0);
+                              const isUserInSplits = expense.splits.some(s => matchesMember(s.userId, meRef));
+                              const isUserInvolved = isUserPayer || isUserInSplits;
+
+                              // Show normal payer summary
+                              // Check for multi-payer scenario
+                              const payers = expense.splits.filter(s => (s.paidAmount || 0) > 0);
+                              const isMultiPayer = payers.length > 1;
+
+                              // Determine what text will be shown
+                              let resolvedSummaryText = "";
+
+                              if (!isUserInvolved) {
+                                resolvedSummaryText = "You are not involved";
+                              } else if (isMultiPayer) {
+                                // Use matchesMember for proper ID comparison
+                                const userPaid = payers.find(p => matchesMember(p.userId, meRef));
+                                if (userPaid) {
+                                  resolvedSummaryText = `You paid ₹${userPaid.paidAmount}`;
+                                } else {
+                                  resolvedSummaryText = `${payers.length} people paid`;
+                                }
+                              } else {
+                                resolvedSummaryText = matchesMember(expense.payerId, meRef)
+                                  ? "You paid"
+                                  : `${getMemberName(expense.payerId)} paid`;
+                              }
+
+                              return resolvedSummaryText;
+                            })()}
                           </p>
                         </div>
                         <div className="text-right">
