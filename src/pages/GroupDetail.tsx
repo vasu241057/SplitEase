@@ -70,34 +70,8 @@ export function GroupDetail() {
             screenName: 'GroupDetail'
         });
 
-        // [GROUP TX AUDIT] Ground Truth Check
-        console.log('[GROUP TX AUDIT]', {
-            groupId: group.id,
-            groupName: group.name,
-            transactionsCount: transactions.length,
-            transactions: transactions.filter(t => t.groupId === group.id).map(t => ({
-                id: t.id,
-                amount: t.amount,
-                paidBy: t.fromId, // fromId is derived in frontend from response
-                paidTo: t.toId,     // toId is derived in frontend from response
-                groupId: t.groupId,
-                createdAt: t.date,
-                type: t.type
-            }))
-        });
-
-        // [GROUP EXPENSE AUDIT] Ground Truth Check
-        console.log('[GROUP EXPENSE AUDIT]', {
-            groupId: group.id,
-            expensesCount: expenses.filter(e => e.groupId === group.id).length,
-            expenses: expenses.filter(e => e.groupId === group.id).map(e => ({
-                id: e.id,
-                amount: e.amount,
-                payerId: e.payerId,
-                splitCount: e.splits?.length,
-                createdAt: e.date
-            }))
-        });
+        // [GROUP TX AUDIT] Ground Truth Check - REMOVED
+        // [GROUP EXPENSE AUDIT] Ground Truth Check - REMOVED
     }
   }, [group?.id, group?.simplifyDebtsEnabled, transactions, expenses, group?.name]);
 
