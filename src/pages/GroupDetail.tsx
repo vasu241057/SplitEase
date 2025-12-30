@@ -78,6 +78,36 @@ export function GroupDetail() {
   const groupExpenses = useMemo(() => expenses.filter((e) => e.groupId === group?.id), [expenses, group?.id]);
   const groupTransactions = useMemo(() => transactions.filter((t) => t.groupId === group?.id && !t.deleted), [transactions, group?.id]);
 
+  // Combined activity: expenses + transactions, sorted by date (newest first)
+  const groupActivity = useMemo(() => [
+    ...groupExpenses.map(e => ({ type: 'expense' as const, data: e, date: new Date(e.date) })),
+    ...groupTransactions.map(t => ({ type: 'transaction' as const, data: t, date: new Date(t.date) }))
+  ].sort((a, b) => b.date.getTime() - a.date.getTime()), [groupExpenses, groupTransactions]);
+
+  // Group activity by month (YYYY-MM) for display headers
+  const activityByMonth = useMemo(() => {
+    const grouped: Record<string, typeof groupActivity> = {};
+    
+    groupActivity.forEach(item => {
+      const monthKey = `${item.date.getFullYear()}-${String(item.date.getMonth() + 1).padStart(2, '0')}`;
+      if (!grouped[monthKey]) {
+        grouped[monthKey] = [];
+      }
+      grouped[monthKey].push(item);
+    });
+    
+    // Sort months in descending order
+    const sortedMonths = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+    
+    return sortedMonths.map(monthKey => ({
+      monthKey,
+      label: new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
+        new Date(parseInt(monthKey.split('-')[0]), parseInt(monthKey.split('-')[1]) - 1)
+      ),
+      items: grouped[monthKey]
+    }));
+  }, [groupActivity]);
+
   // Calculate Net Balances for Simplification
   const netBalances = useMemo<MemberBalance[]>(() => {
     if (!group) return [];
@@ -198,9 +228,6 @@ export function GroupDetail() {
                  });
                  
                  groupTransactions.forEach((t) => {
-                     // Transaction effect on balance
-                     // If I paid Them (I owe Them) -> Balance -
-                     // If Them paid Me (Them owes Me) -> Balance +
                      if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
                          balance += t.amount;
                      } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
@@ -225,17 +252,19 @@ export function GroupDetail() {
     )
   }
 
+
   if (!group) {
     return <div>Group not found</div>
   }
 
   // groupExpenses/Transactions defined above
-  
-  // Combined activity: expenses + transactions, sorted by date (newest first)
-  const groupActivity = [
-    ...groupExpenses.map(e => ({ type: 'expense' as const, data: e, date: new Date(e.date) })),
-    ...groupTransactions.map(t => ({ type: 'transaction' as const, data: t, date: new Date(t.date) }))
-  ].sort((a, b) => b.date.getTime() - a.date.getTime())
+
+  // Helper to format date as "20 Dec"
+  const formatShortDate = (date: Date) => {
+    const day = date.getDate();
+    const month = date.toLocaleDateString('en-US', { month: 'short' });
+    return `${day} ${month}`;
+  };
 
 
   const getMemberName = (id: string) => {
@@ -378,8 +407,17 @@ export function GroupDetail() {
                 <p className="text-sm">Tap + to add an expense.</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {groupActivity.map((item) => {
+            <div className="space-y-6">
+              {activityByMonth.map(({ monthKey, label, items }) => (
+                <div key={monthKey} className="space-y-3">
+                  {/* Month Header */}
+                  <h3 className="text-sm font-semibold text-muted-foreground sticky top-0 bg-background py-2 z-10">
+                    {label}
+                  </h3>
+                  
+                  {/* Items for this month */}
+                  <div className="space-y-3">
+                    {items.map((item) => {
                 if (item.type === 'expense') {
                   const expense = item.data;
                   return (
@@ -397,7 +435,7 @@ export function GroupDetail() {
                             {expense.description}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {new Date(expense.date).toLocaleDateString()} •{" "}
+                            {formatShortDate(item.date)} •{" "}
                             {(() => {
                               // Find the current user's member record in this group
                               // This is needed because split.userId may contain the friend_id (how others see us)
@@ -498,7 +536,7 @@ export function GroupDetail() {
                             {displayText}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {new Date(transaction.date).toLocaleDateString()} • Settle up
+                            {formatShortDate(item.date)} • Settle up
                           </p>
                         </div>
                         <div className="text-right">
@@ -511,6 +549,9 @@ export function GroupDetail() {
                   );
                 }
               })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
       </div>

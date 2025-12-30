@@ -107,7 +107,7 @@ export function Activity() {
                         <span className="font-medium truncate max-w-[100px]">{contextLabel}</span>
                       </div>
                       <span>•</span>
-                      <span>{new Date(activity.date).toLocaleDateString()}</span>
+                      <span>{new Date(activity.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                     </div>
                   </div>
                   <div className="text-right">
