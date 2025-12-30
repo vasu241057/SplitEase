@@ -43,18 +43,47 @@ export function getFriendBalanceBreakdown(
     const gExpenses = expenses.filter(e => e.groupId === group.id)
     const gTrans = transactions.filter((t: any) => t.groupId === group.id && !t.deleted)
 
+    // RESOLVE CORRECT MEMBER REFS FOR THIS GROUP
+    // "Me" might be represented by a group-specific friend_id
+    const groupMe = group.members.find(m => m.userId === currentUser.id) || 
+                    group.members.find(m => m.id === currentUser.id); // Fallback
+    
+    const realMeRef: GroupMember = {
+        id: groupMe?.id || currentUser.id,
+        userId: currentUser.id
+    };
+
+    // "Friend" might be represented by a group-specific friend_id or linked user
+    // We match by linked_user_id if available, or fall back to the generic friend.id
+    const groupFriend = group.members.find(m => 
+        (friend.linked_user_id && m.userId === friend.linked_user_id) || 
+        m.id === friend.id
+    );
+
+    const realFriendRef: GroupMember = {
+        id: groupFriend?.id || friend.id,
+        userId: friend.linked_user_id ?? undefined
+    };
+
     let bal = 0
     
-    // Process Expenses using rigorous logic
+    // Process Expenses using rigorous logic and group-specific refs
     gExpenses.forEach(e => {
-        bal += calculateExpenseDebt(e);
+        // Use the group-specific refs!
+        const debt = calculatePairwiseExpenseDebt(
+           { splits: e.splits }, 
+           realMeRef, 
+           realFriendRef
+        );
+        bal += debt;
     })
 
     // RE-INSTATE original transaction logic strictly to avoid regression
     gTrans.forEach((t: any) => {
-      if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, friendRef)) {
+      // Use the group-specific refs!
+      if (matchesMember(t.fromId, realMeRef) && matchesMember(t.toId, realFriendRef)) {
         bal += t.amount
-      } else if (matchesMember(t.fromId, friendRef) && matchesMember(t.toId, meRef)) {
+      } else if (matchesMember(t.fromId, realFriendRef) && matchesMember(t.toId, realMeRef)) {
         bal -= t.amount
       }
     })

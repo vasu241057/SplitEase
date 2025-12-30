@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, useEffect } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { ArrowLeft, Banknote, Users, ArrowRightLeft, ChevronDown, ChevronUp } from "lucide-react"
 import { useData } from "../context/DataContext"
@@ -16,6 +16,25 @@ export function FriendDetail() {
   const [showAllBalances, setShowAllBalances] = useState(false)
   
   const friend = friends.find((f) => f.id === id)
+
+  // IMPORTANT:
+  // Friend balances MUST ALWAYS use RAW ledger math.
+  // Group-level simplified debts must NEVER affect this screen.
+  useEffect(() => {
+    if (!friend) return;
+
+    const mutualGroups = groups.filter(g =>
+      g.members.some(m => m.userId === currentUser.id || m.id === currentUser.id)
+    );
+
+    mutualGroups.forEach(g => {
+      console.log('[SIMPLIFY STATE]', {
+        groupId: g.id,
+        enabled: g.simplifyDebtsEnabled,
+        screenName: 'FriendDetail'
+      });
+    });
+  }, [friend?.id, groups, currentUser.id]);
 
   // Calculate breakdown for the "Bucket" view
   const breakdown = useMemo(() => {
@@ -91,6 +110,8 @@ export function FriendDetail() {
             data: { name: group.name },
             amount: bal
         });
+
+
     });
 
     // 2. Personal Expenses (Non-Group)
@@ -119,6 +140,8 @@ export function FriendDetail() {
             });
         }
     });
+
+
     
     return combinedItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [friend, currentUser, groups, expenses, transactions])

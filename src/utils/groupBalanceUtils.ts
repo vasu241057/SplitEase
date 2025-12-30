@@ -129,15 +129,27 @@ export function calculatePairwiseExpenseDebt(
   them: GroupMember
 ): number {
   // 1. Calculate Net Balances for everyone in the expense
+  // 1. Calculate Net Balances for everyone in the expense
   const nets = new Map<string, number>();
   
+  // Helper to canonicalize identity strictly for NETTING purposes
+  // Goal: Merge "Me (User ID)" and "Me (Friend ID)" into one bucket
+  const getCanonicalId = (id: string): string => {
+    if (matchesMember(id, me)) return 'C_ME';
+    if (matchesMember(id, them)) return 'C_THEM';
+    return id; // Other participants keep their unique ID
+  };
+
   expense.splits.forEach(s => {
     const uid = s.userId;
     if (!uid) return;
+    
+    const canonicalId = getCanonicalId(uid);
     const paid = (s.paidAmount || 0);
     const cost = (s.amount || 0);
-    const current = nets.get(uid) || 0;
-    nets.set(uid, current + (paid - cost));
+    
+    const current = nets.get(canonicalId) || 0;
+    nets.set(canonicalId, current + (paid - cost));
   });
 
   // 2. Separate into Debtors and Creditors
@@ -167,10 +179,12 @@ export function calculatePairwiseExpenseDebt(
     const amount = Math.min(Math.abs(debtor.amount), creditor.amount);
     
     // Check if this transfer involves Me and Them
-    const debtorIsMe = matchesMember(debtor.id, me);
-    const debtorIsThem = matchesMember(debtor.id, them);
-    const creditorIsMe = matchesMember(creditor.id, me);
-    const creditorIsThem = matchesMember(creditor.id, them);
+    // Check if this transfer involves Me and Them
+    // Since we canonicalized to 'C_ME' and 'C_THEM', we check directly
+    const debtorIsMe = debtor.id === 'C_ME' || matchesMember(debtor.id, me); // Fallback for safety
+    const debtorIsThem = debtor.id === 'C_THEM' || matchesMember(debtor.id, them);
+    const creditorIsMe = creditor.id === 'C_ME' || matchesMember(creditor.id, me);
+    const creditorIsThem = creditor.id === 'C_THEM' || matchesMember(creditor.id, them);
 
     if (debtorIsThem && creditorIsMe) {
         // Them pays Me (Them owes Me) -> Positive balance for Me

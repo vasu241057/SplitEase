@@ -25,12 +25,25 @@ export function GroupDetail() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]) // For bulk selection
   const [isAddingMembers, setIsAddingMembers] = useState(false) // Loading state for bulk add
 
+  const group = groups.find((g) => g.id === id)
 
-  // Simplify Debts Preference
-  const [simplifyDebts] = useState(() => {
-    if (!id) return false;
-    return localStorage.getItem(`simplify_debts_${id}`) === 'true';
-  });
+  const [isReverting, setIsReverting] = useState(false);
+
+  // Simplify Debts Preference (Driven by DB now)
+  const simplifyDebts = group?.simplifyDebtsEnabled === true;
+
+  const handleRevertToRaw = async () => {
+      if (!group) return;
+      setIsReverting(true);
+      try {
+          await api.put(`/api/groups/${group.id}`, { simplifyDebtsEnabled: false });
+          await refreshGroups();
+      } catch (err) {
+          console.error("Failed to revert simplify:", err);
+      } finally {
+          setIsReverting(false);
+      }
+  };
 
   const handleBack = () => {
     const fromFriendId = location.state?.fromFriendId
@@ -45,7 +58,48 @@ export function GroupDetail() {
     refreshExpenses()
   }, [refreshExpenses])
 
-  const group = groups.find((g) => g.id === id)
+
+
+
+  useEffect(() => {
+    if (group) {
+        // AUDIT LOG: Applying View
+        console.log('[SIMPLIFY STATE]', {
+            groupId: group.id,
+            enabled: group.simplifyDebtsEnabled,
+            screenName: 'GroupDetail'
+        });
+
+        // [GROUP TX AUDIT] Ground Truth Check
+        console.log('[GROUP TX AUDIT]', {
+            groupId: group.id,
+            groupName: group.name,
+            transactionsCount: transactions.length,
+            transactions: transactions.filter(t => t.groupId === group.id).map(t => ({
+                id: t.id,
+                amount: t.amount,
+                paidBy: t.fromId, // fromId is derived in frontend from response
+                paidTo: t.toId,     // toId is derived in frontend from response
+                groupId: t.groupId,
+                createdAt: t.date,
+                type: t.type
+            }))
+        });
+
+        // [GROUP EXPENSE AUDIT] Ground Truth Check
+        console.log('[GROUP EXPENSE AUDIT]', {
+            groupId: group.id,
+            expensesCount: expenses.filter(e => e.groupId === group.id).length,
+            expenses: expenses.filter(e => e.groupId === group.id).map(e => ({
+                id: e.id,
+                amount: e.amount,
+                payerId: e.payerId,
+                splitCount: e.splits?.length,
+                createdAt: e.date
+            }))
+        });
+    }
+  }, [group?.id, group?.simplifyDebtsEnabled, transactions, expenses, group?.name]);
 
   // Use shared hook for balances
   const { isGroupSettled } = useGroupBalance(group);
@@ -316,8 +370,16 @@ export function GroupDetail() {
         </Button>
         <div className="flex-1">
           <h1 className="text-xl font-bold">{group.name}</h1>
-          <p className="text-sm text-muted-foreground capitalize">
+          <p className="text-sm text-muted-foreground capitalize flex items-center gap-2">
             {group.type}
+            {group.simplifyDebtsEnabled && (
+                <span 
+                    title="Everyone in this group sees the same payment suggestions"
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 cursor-help"
+                >
+                    Simplified View (Group)
+                </span>
+            )}
           </p>
         </div>
 
@@ -343,6 +405,32 @@ export function GroupDetail() {
                      Unable to simplify debts due to a balance mismatch. Showing original balances to ensure accuracy.
                  </p>
             </div>
+        )}
+
+        {/* Simplified View Banner - Explain & Revert */}
+        {simplifyDebts && !simplificationError && (
+             <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
+                 <div className="flex-1">
+                     <p className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
+                         <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                         Simplified View (Group)
+                     </p>
+                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                        <p>This view shows a simplified payment route.</p>
+                        <p>It does NOT change what anyone owes overall.</p>
+                        <p>You can always switch back to the original ledger.</p>
+                     </div>
+                 </div>
+                 <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-auto py-1 px-2 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                    onClick={handleRevertToRaw}
+                    disabled={isReverting}
+                 >
+                     {isReverting ? "Reverting..." : "View Original Debts"}
+                 </Button>
+             </div>
         )}
 
         {isGroupSettled ? (

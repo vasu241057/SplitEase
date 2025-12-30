@@ -25,6 +25,7 @@ export type Group = {
   members: GroupMember[] 
   type: "trip" | "home" | "couple" | "other"
   createdBy?: string // User ID of the group creator (admin)
+  simplifyDebtsEnabled?: boolean | null // Audit only for Step 1
 }
 
 export type SplitType = "equal" | "unequal" | "shares" | "percentage"

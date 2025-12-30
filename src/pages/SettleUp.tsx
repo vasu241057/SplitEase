@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { ArrowLeft, Loader2, Info } from "lucide-react"
 import { useData } from "../context/DataContext"
@@ -29,9 +29,19 @@ export function SettleUp() {
 
   // Filter groups where both I and the selected friend are members
   const selectedGroup = groups.find(g => g.id === groupId);
-  
-  // Check if simplification is enabled for this group
-  const isSimplified = selectedGroup ? localStorage.getItem(`simplify_debts_${selectedGroup.id}`) === 'true' : false;
+
+  // Check if simplification is enabled for this group (DB Flag)
+  const isSimplified = selectedGroup?.simplifyDebtsEnabled === true;
+
+  useEffect(() => {
+    if (selectedGroup) {
+      console.log('[SIMPLIFY STATE]', {
+        groupId: selectedGroup.id,
+        enabled: isSimplified,
+        screenName: 'SettleUp'
+      });
+    }
+  }, [selectedGroup?.id, isSimplified]);
 
   // Derive available users to settle with
   // If Group is selected: Show Group Members (excluding me)

@@ -17,6 +17,17 @@ router.get('/', async (req, res) => {
   // 3. User is the linked user (friend.linked_user_id)
   // 4. Transaction is in a group user is a member of
   
+  // DEBUG: Raw Count Check
+  const { count: rawCount, data: rawSample, error: rawError } = await supabase
+    .from('transactions')
+    .select('*', { count: 'exact', head: false });
+
+  console.log('[BACKEND RAW CHECK]', {
+      rawCount,
+      rawSampleId: rawSample?.[0]?.id,
+      error: rawError?.message
+  });
+
   const { data, error } = await supabase
     .from('transactions')
     .select('*, friend:friends(owner_id, linked_user_id)');
@@ -43,6 +54,20 @@ router.get('/', async (req, res) => {
     if (t.group_id && userGroupIds.has(t.group_id)) return true;
     
     return false;
+  });
+
+  // [BACKEND TX DEBUG]
+  console.log('[BACKEND TX DEBUG]', {
+      userId,
+      totalFetched: data?.length,
+      userGroupsCount: userGroupIds.size,
+      userGroups: Array.from(userGroupIds),
+      filteredCount: filteredData.length,
+      // Log dropped transactions for the target group
+      droppedGoaTx: (data || []).filter((t: any) => 
+          t.group_id === '89546a53-5eb4-4a3c-b90a-25e4591182d5' && 
+          !filteredData.find((f: any) => f.id === t.id)
+      ).map((t: any) => ({ id: t.id, groupId: t.group_id, createdBy: t.created_by }))
   });
   
   const formatted = filteredData.map((t: any) => {

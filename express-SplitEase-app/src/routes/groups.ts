@@ -36,6 +36,7 @@ router.get('/', async (req, res) => {
   const formattedGroups = groups.map((g: any) => ({
     ...g,
     createdBy: g.created_by, // Include creator ID for Admin badge
+    simplifyDebtsEnabled: g.simplify_debts_enabled,
     members: g.group_members.map((gm: any) => ({
         id: gm.friends.id,
         name: gm.friends.name,
@@ -222,21 +223,83 @@ router.post('/:id/members', async (req, res) => {
   res.json(formattedGroup);
 });
 
-// Rename Group
+// Update Group (Name or Settings)
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, simplifyDebtsEnabled } = req.body;
+    const currentUserId = (req as any).user?.id;
     const supabase = createSupabaseClient();
 
-    const { data, error } = await supabase
+    // Prepare update object
+    const updates: any = {};
+    if (name !== undefined) updates.name = name;
+    if (simplifyDebtsEnabled !== undefined) updates.simplify_debts_enabled = simplifyDebtsEnabled;
+
+    if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No fields to update" });
+    }
+
+    // Perform Update
+    const { data: updatedGroup, error } = await supabase
         .from('groups')
-        .update({ name })
+        .update(updates)
         .eq('id', id)
         .select()
         .single();
     
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+
+    // Handle Notifications for Simplify Toggle
+    if (simplifyDebtsEnabled !== undefined) {
+        try {
+            // 1. Get Group Members (to notify)
+            const { data: members } = await supabase
+                .from('group_members')
+                .select('friends(linked_user_id)')
+                .eq('group_id', id);
+
+            // 2. Get Actor Name
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', currentUserId)
+                .single();
+            
+            const actorName = profile?.full_name || 'Someone';
+            const actionText = simplifyDebtsEnabled ? 'enabled' : 'disabled';
+            const title = `Group Settings Updated ⚙️`;
+            const body = `Simplified debts ${actionText} by ${actorName}`;
+            const url = `/groups/${id}/settings`; // Direct to settings so they can see the toggle
+
+            // 3. Filter Recipients (Exclude current user)
+            const recipients = members
+                ?.map((m: any) => m.friends?.linked_user_id)
+                .filter((uid: string) => uid && uid !== currentUserId) || [];
+
+            if (recipients.length > 0) {
+                console.log(`[Groups] Notifying simplify toggle. Group: ${id}, Actor: ${actorName}, Action: ${actionText}`);
+                const { sendPushNotification } = await import('../utils/push');
+                
+                // Construct env object for utility
+                const envKey = process.env as any;
+                const env = {
+                    SUPABASE_URL: envKey.SUPABASE_URL,
+                    SUPABASE_SERVICE_ROLE_KEY: envKey.SUPABASE_SERVICE_ROLE_KEY,
+                    VAPID_PUBLIC_KEY: envKey.VAPID_PUBLIC_KEY,
+                    VAPID_PRIVATE_KEY: envKey.VAPID_PRIVATE_KEY,
+                    VAPID_SUBJECT: envKey.VAPID_SUBJECT
+                };
+                
+                await sendPushNotification(env, recipients, title, body, url);
+            }
+
+        } catch (notifyError) {
+            console.error('[Groups] Failed to send simplify notification:', notifyError);
+            // Non-blocking error
+        }
+    }
+
+    res.json(updatedGroup);
 });
 
 // Remove Member

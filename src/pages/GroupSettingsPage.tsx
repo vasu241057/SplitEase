@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight } from "lucide-react"
 import { Label } from "../components/ui/label"
@@ -36,15 +36,47 @@ export function GroupSettingsPage() {
     } | null>(null)
     const [errorModal, setErrorModal] = useState<string | null>(null)
 
-    const [simplifyDebts, setSimplifyDebts] = useState(() => {
-        if (!group) return false;
-        return localStorage.getItem(`simplify_debts_${group.id}`) === 'true';
-    });
+    useEffect(() => {
+        if (group) {
+            console.log('[SIMPLIFY STATE]', {
+                groupId: group.id,
+                enabled: group.simplifyDebtsEnabled,
+                screenName: 'GroupSettings'
+            });
+        }
+    }, [group?.id, group?.simplifyDebtsEnabled]);
 
-    const handleToggleSimplify = (enabled: boolean) => {
+    // Use group state as source of truth (fallback to false if null/undefined)
+    // NOTE: We do NOT use localStorage for logic anymore.
+    const simplifyDebts = group?.simplifyDebtsEnabled ?? false;
+
+    const handleToggleSimplify = async (enabled: boolean) => {
         if (!group) return;
-        setSimplifyDebts(enabled);
-        localStorage.setItem(`simplify_debts_${group.id}`, String(enabled));
+        
+        // Optimistic update logging
+        console.log('[SIMPLIFY SYNC]', {
+            groupId: group.id,
+            previousValue: simplifyDebts,
+            newValue: enabled,
+            triggeredByUserId: currentUser.id,
+            screenName: 'GroupSettings'
+        });
+
+        try {
+            // Update DB via API
+            await api.put(`/api/groups/${group.id}`, { simplifyDebtsEnabled: enabled });
+            
+            // Note: We don't set local state manually because 'group' will be refreshed
+            // via React Query / Context invalidation usually. 
+            // However, for immediate feedback if 'refreshGroups' is slow, 
+            // the UI might lag. But 'refreshGroups' is called below.
+            
+            await refreshGroups();
+
+        } catch (error: any) {
+            console.error("Failed to toggle simplify debts:", error);
+            setErrorModal("Failed to update group settings");
+        }
     };
 
     // Calculate group spending summary (read-only analytics)
