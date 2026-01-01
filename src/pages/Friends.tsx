@@ -182,8 +182,8 @@ export function Friends() {
                     
                     {/* Buckets Breakdown */}
                     {(() => {
-                         // Use Backend Provided Breakdown
-                         const breakdown = friend.group_breakdown || [];
+                         // Use Backend Provided Breakdown and Sort by Magnitude
+                         const breakdown = [...(friend.group_breakdown || [])].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
                          
                          if (breakdown.length === 0) return null;
 

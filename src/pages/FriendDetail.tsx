@@ -43,7 +43,7 @@ export function FriendDetail() {
       amount: b.amount,
       isGroup: true,
       id: b.groupId // helper for keys
-    }));
+    })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
   }, [friend?.group_breakdown]);
 
   // DEV-ONLY: Invariant Assertion
