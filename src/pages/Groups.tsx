@@ -1,4 +1,3 @@
-import { useMemo } from "react"
 import { Plus, Users } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { useData } from "../context/DataContext"
@@ -8,10 +7,9 @@ import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
 import { cn } from "../utils/cn"
-import { calculateUserGroupBalance } from "../utils/groupBalanceUtils"
 
 export function Groups() {
-  const { groups, friends, loading, expenses, transactions, currentUser } = useData()
+  const { groups, friends, loading } = useData()
   const navigate = useNavigate()
 
   // Calculate net balance for groups (mock logic as group balance isn't directly stored)
@@ -29,15 +27,7 @@ export function Groups() {
 
 
   // Calculate current user's net balance in a group (what others owe me - what I owe others)
-  const groupBalances = useMemo(() => {
-    const balances: Record<string, number> = {};
-    
-    groups.forEach(group => {
-       balances[group.id] = calculateUserGroupBalance(group, currentUser, expenses, transactions);
-    });
-    
-    return balances;
-  }, [groups, expenses, transactions, currentUser]);
+
 
   return (
     <div className="space-y-6">
@@ -80,7 +70,7 @@ export function Groups() {
           </p>
         ) : (
           groups.map((group) => {
-            const balance = groupBalances[group.id] || 0
+            const balance = group.currentUserBalance || 0
             const isSettled = Math.abs(balance) < 0.01
             
             return (

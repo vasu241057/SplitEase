@@ -33,10 +33,13 @@ router.get('/', async (req, res) => {
     
   if (error) return res.status(500).json({ error: error.message });
   
+  const currentUserId = (req as any).user.id;
+
   const formattedGroups = groups.map((g: any) => ({
     ...g,
     createdBy: g.created_by, // Include creator ID for Admin badge
     simplifyDebtsEnabled: g.simplify_debts_enabled,
+    currentUserBalance: g.user_balances ? (g.user_balances[currentUserId] || 0) : 0, // <-- Backend Logic
     members: g.group_members.map((gm: any) => ({
         id: gm.friends.id,
         name: gm.friends.name,

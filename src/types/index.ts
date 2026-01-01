@@ -31,6 +31,7 @@ export type Group = {
   type: "trip" | "home" | "couple" | "other"
   createdBy?: string // User ID of the group creator (admin)
   simplifyDebtsEnabled?: boolean | null // Audit only for Step 1
+  currentUserBalance?: number
 }
 
 export type SplitType = "equal" | "unequal" | "shares" | "percentage"

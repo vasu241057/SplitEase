@@ -15,16 +15,33 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     
     const signatureStart = `${latestExpense?.created_at || '0'}|${latestTx?.created_at || '0'}`;
 
-// Helper to add delta to deep map
+    // Map: GroupID -> Map<UserId, number> (For Group List Optimization)
+    // We only track Global User IDs here, as this is for the "Your Balance" view.
+    const groupUserBalances = new Map<string, Map<string, number>>();
+
+    // Helper to add delta to deep map
     const addGroupDelta = (friendId: string, groupId: string | undefined, delta: number) => {
         if (!groupId) return; // Ignore non-group expenses for breakdown
-        // Initialize map structure if needed
+        
+        // 1. Update Friend Group Breakdown (Existing Logic)
         if (!friendGroupBalances.has(friendId)) {
             friendGroupBalances.set(friendId, new Map<string, number>());
         }
         const groupMap = friendGroupBalances.get(friendId)!;
         const current = groupMap.get(groupId) || 0;
         groupMap.set(groupId, current + delta);
+
+        // 2. Update Group User Balances (New Logic for Groups List)
+        // Resolve FriendID -> Global UserID
+        const globalUserId = friendIdToLinkedUser.get(friendId);
+        if (globalUserId) {
+            if (!groupUserBalances.has(groupId)) {
+                groupUserBalances.set(groupId, new Map<string, number>());
+            }
+            const userMap = groupUserBalances.get(groupId)!;
+            const userCurrent = userMap.get(globalUserId) || 0;
+            userMap.set(globalUserId, userCurrent + delta);
+        }
     };
 
     // 1. Fetch all Friends (to reset and for lookups)
@@ -239,6 +256,7 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     const currentBalancesMap = new Map<string, any>();
     currentBalancesData?.forEach((f: any) => currentBalancesMap.set(f.id, f));
     
+    // 6a. Update Friends
     const validUpdates = Array.from(friendBalances.entries()).map(async ([id, balance]) => {
         const finalBalance = Math.round(balance * 100) / 100;
         
@@ -277,8 +295,24 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
              }).eq('id', id);
         }
     });
+
+    // 6b. Update Groups (New Persistence)
+    const groupUpdates = Array.from(groupUserBalances.entries()).map(async ([groupId, userMap]: [string, Map<string, number>]) => {
+        const userBalancesObj: Record<string, number> = {};
+        userMap.forEach((amt: number, uid: string) => {
+            if (Math.abs(amt) > 0.01) {
+                userBalancesObj[uid] = Math.round(amt * 100) / 100;
+            }
+        });
+        
+        // Optimistic check could be added here similar to friends, but for now blind update is safe-ish
+        // for the "Single Source of Truth" goal.
+        await supabase.from('groups').update({
+            user_balances: userBalancesObj
+        }).eq('id', groupId);
+    });
     
-    await Promise.all(validUpdates);
+    await Promise.all([...validUpdates, ...groupUpdates]);
     console.log('[BALANCE_DEBUG] Persistence Complete.');
     return; // Success, exit loop
   }
