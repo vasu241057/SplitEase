@@ -8,7 +8,7 @@ import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
 import { cn } from "../utils/cn"
-import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "../utils/groupBalanceUtils"
+import { calculateUserGroupBalance } from "../utils/groupBalanceUtils"
 
 export function Groups() {
   const { groups, friends, loading, expenses, transactions, currentUser } = useData()
@@ -33,50 +33,11 @@ export function Groups() {
     const balances: Record<string, number> = {};
     
     groups.forEach(group => {
-      // Find current user's member record in this group
-      const myMemberRecord = group.members.find(
-        (m: any) => m.id === currentUser.id || m.userId === currentUser.id
-      );
-      
-      if (!myMemberRecord) {
-        balances[group.id] = 0;
-        return;
-      }
-      
-      const meRef: GroupMember = { 
-        id: myMemberRecord.id, 
-        userId: currentUser.id 
-      };
-      
-      const groupExpenses = expenses.filter(e => e.groupId === group.id);
-      const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-      
-      let myBalance = 0;
-      
-      // Calculate balance with each other member
-      group.members.forEach((member: any) => {
-        if (member.id === myMemberRecord.id || member.userId === currentUser.id) return;
-        
-        const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-        
-        groupExpenses.forEach(expense => {
-          myBalance += calculatePairwiseExpenseDebt(expense, meRef, themRef);
-        });
-        
-        groupTransactions.forEach((t: any) => {
-          if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
-            myBalance += t.amount;
-          } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
-            myBalance -= t.amount;
-          }
-        });
-      });
-      
-      balances[group.id] = myBalance;
+       balances[group.id] = calculateUserGroupBalance(group, currentUser, expenses, transactions);
     });
     
     return balances;
-  }, [groups, expenses, transactions, currentUser.id]);
+  }, [groups, expenses, transactions, currentUser]);
 
   return (
     <div className="space-y-6">

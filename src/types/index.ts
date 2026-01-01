@@ -9,6 +9,11 @@ export type Friend = User & {
   balance: number // +ve means they owe you, -ve means you owe them
   linked_user_id?: string
   isGhost?: boolean
+  group_breakdown?: {
+    groupId: string
+    name: string
+    amount: number
+  }[]
 }
 
 export type GroupMember = {

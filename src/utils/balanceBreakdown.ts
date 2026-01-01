@@ -1,3 +1,8 @@
+/**
+ * @deprecated
+ * Friend balance breakdown is now computed by backend.
+ * Do not use for new features.
+ */
 
 import type { Friend, User, Group, Expense, Transaction } from "../types"
 import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "./groupBalanceUtils"

@@ -204,3 +204,82 @@ export function calculatePairwiseExpenseDebt(
   
   return balanceDelta;
 }
+
+/**
+ * Calculate the total balance for a specific user in a group.
+ * Aggregates all pairwise debts within the group context.
+ * 
+ * @param group The group object (must contain members)
+ * @param currentUser The user object (must contain id)
+ * @param expenses List of expenses (will be filtered by groupId if passed all, or assumed filtered)
+ * @param transactions List of transactions (will be filtered by groupId if passed all, or assumed filtered)
+ */
+export function calculateUserGroupBalance(
+  group: { id: string; members: any[] },
+  currentUser: { id: string },
+  expenses: Array<{ groupId?: string; splits: any[]; payerId: string; amount: number }>,
+  transactions: Array<{ groupId?: string; fromId: string; toId: string; amount: number; deleted?: boolean }>
+): number {
+  // Find current user's member record in this group
+  const myMemberRecord = group.members.find(
+    (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+  );
+
+  if (!myMemberRecord) {
+    return 0;
+  }
+
+  const meRef: GroupMember = {
+    id: myMemberRecord.id,
+    userId: currentUser.id
+  };
+
+  // Filter if not already filtered (safety check)
+  const groupExpenses = expenses.filter(e => e.groupId === group.id);
+  const groupTransactions = transactions.filter(t => t.groupId === group.id && !t.deleted);
+
+  let myBalance = 0;
+
+  // Calculate balance with each other member
+  group.members.forEach((member: any) => {
+    // Skip self
+    if (member.id === myMemberRecord.id || member.userId === currentUser.id) return;
+
+    const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
+
+    // 1. Expenses Effect
+    groupExpenses.forEach(expense => {
+      // Logic: calculatePairwiseExpenseDebt returns "Them owes Me" (Positive)
+      // So if >0, I am owed. If <0, I owe.
+      // We sum this up to get my total net position.
+      myBalance += calculatePairwiseExpenseDebt(expense, meRef, themRef);
+    });
+
+    // 2. Transactions Effect
+    groupTransactions.forEach(t => {
+      // Directions relative to Me
+      if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
+        // Me -> Them (I paid Them)
+        // Does this increase or decrease my balance?
+        // If I paid, I gave money.
+        // In "Balance" context (Net Asset), paying someone usually reduces what I owe them, or increases what they owe me?
+        // Wait. `calculatePairwiseExpenseDebt` returns "Amount Them Owes Me".
+        // If I hand them cash (Transaction), "Them Owes Me" DECREASES?
+        // Or "I Owe Them" DECREASES (becomes less negative -> positive shift).
+        // Let's look at `Groups.tsx` reference logic:
+        // if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) myBalance += t.amount;
+        // Logic: I paid. My "Asset" position increases?
+        // If I owed -100, and I pay 50. My balance becomes -50. (-100 + 50).
+        // So += Amount is correct.
+        myBalance += t.amount;
+      } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
+        // Them -> Me (They paid Me)
+        // If They owed 100, and pay 50. My asset becomes 50. (100 - 50).
+        // So -= Amount is correct.
+        myBalance -= t.amount;
+      }
+    });
+  });
+
+  return myBalance;
+}

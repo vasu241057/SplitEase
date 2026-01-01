@@ -6,8 +6,8 @@ import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Card } from "../components/ui/card"
 import { cn } from "../utils/cn"
-import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
-import { calculatePairwiseExpenseDebt } from "../utils/groupBalanceUtils"
+// getFriendBalanceBreakdown removed
+import { calculatePairwiseExpenseDebt, matchesMember } from "../utils/groupBalanceUtils"
 
 export function FriendDetail() {
   const { id } = useParams<{ id: string }>()
@@ -36,16 +36,25 @@ export function FriendDetail() {
     });
   }, [friend?.id, groups, currentUser.id]);
 
-  // Calculate breakdown for the "Bucket" view
+  // Use backend provided breakdown
   const breakdown = useMemo(() => {
-    return getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
-  }, [friend, currentUser, groups, expenses, transactions])
+    return (friend?.group_breakdown || []).map(b => ({
+      name: b.name,
+      amount: b.amount,
+      isGroup: true,
+      id: b.groupId // helper for keys
+    }));
+  }, [friend?.group_breakdown]);
 
 
   // Memoize all sorted items (Groups + Personal) for the timeline
   const sortedItems = useMemo(() => {
     if (!friend || !currentUser) return []
     
+    // Create Global Refs for Non-Group Items
+    const globalMeRef = { id: currentUser.id, userId: currentUser.id };
+    const globalFriendRef = { id: friend.id, userId: friend.linked_user_id || undefined };
+
     const combinedItems: Array<{
         type: 'group' | 'expense' | 'transaction';
         date: string;
@@ -64,40 +73,41 @@ export function FriendDetail() {
     mutualGroups.forEach(group => {
         const groupMe = group.members.find(m => m.userId === currentUser.id || m.id === currentUser.id);
         const groupFriend = group.members.find(m => m.id === friend.id || (friend.linked_user_id && m.userId === friend.linked_user_id));
+        
         if (!groupMe || !groupFriend) return;
+
+        // Construct correct refs for this group context (Crucial for Multi-Payer)
+        const meRef = { id: groupMe.id, userId: groupMe.userId || currentUser.id };
+        const friendRef = { id: groupFriend.id, userId: groupFriend.userId || friend.linked_user_id };
 
         const gExpenses = expenses.filter(e => e.groupId === group.id);
         const gTrans = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
 
-        // Calculate Balance
+        // Calculate Balance using Invariant Utility
         let bal = 0;
-        const isMe = (id: string) => id === groupMe.id || (groupMe.userId && id === groupMe.userId);
-        const isFriend = (id: string) => id === groupFriend.id || (groupFriend.userId && id === groupFriend.userId);
-
-        // Find Latest Activity Date
         let latestDate = new Date(0).toISOString(); // Default to epoch
 
         gExpenses.forEach(e => {
-             if (
-                 (isMe(e.payerId) && e.splits.some(s => isFriend(s.userId))) ||
-                 (isFriend(e.payerId) && e.splits.some(s => isMe(s.userId)))
-             ) {
+             // Use the Gold Standard Utility
+             // This handles Multi-Payer correctly by calculating the precise pairwise debt effect
+             const debt = calculatePairwiseExpenseDebt(e, meRef, friendRef);
+             
+             // If there is a debt effect, update balance
+             if (Math.abs(debt) > 0.001) {
+                 bal += debt;
+                 // Update latest date if this expense is relevant
                  if (new Date(e.date) > new Date(latestDate)) latestDate = e.date;
-             }
-             if (isMe(e.payerId)) {
-                 const s = e.splits.find(s => isFriend(s.userId));
-                 if (s) bal += (s.amount || 0);
-             } else if (isFriend(e.payerId)) {
-                 const s = e.splits.find(s => isMe(s.userId));
-                 if (s) bal -= (s.amount || 0);
              }
         });
 
         gTrans.forEach((t: any) => {
-            if (isMe(t.fromId) && isFriend(t.toId)) {
+            // Check direction: Me -> Friend (I paid, balance increases)
+            if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, friendRef)) {
                  bal += t.amount;
                  if (new Date(t.date) > new Date(latestDate)) latestDate = t.date;
-            } else if (isFriend(t.fromId) && isMe(t.toId)) {
+            } 
+            // Check direction: Friend -> Me (Friend paid, balance decreases)
+            else if (matchesMember(t.fromId, friendRef) && matchesMember(t.toId, meRef)) {
                  bal -= t.amount;
                  if (new Date(t.date) > new Date(latestDate)) latestDate = t.date;
             }
@@ -110,13 +120,14 @@ export function FriendDetail() {
             data: { name: group.name },
             amount: bal
         });
-
-
     });
 
     // 2. Personal Expenses (Non-Group)
     expenses.forEach(e => {
-        if (!e.groupId && e.splits.some(s => s.userId === friend.id || (friend.linked_user_id && s.userId === friend.linked_user_id))) {
+        // Use Global Refs and Utility to check relevance
+        const debt = calculatePairwiseExpenseDebt(e, globalMeRef, globalFriendRef);
+        
+        if (!e.groupId && Math.abs(debt) > 0.001) {
             combinedItems.push({
                 type: 'expense',
                 date: e.date,
@@ -128,21 +139,29 @@ export function FriendDetail() {
 
     // 3. Personal Transactions (Non-Group)
     transactions.forEach((t: any) => {
-        if (!t.groupId && !t.deleted &&
-            ((t.fromId === currentUser.id && (t.toId === friend.id || t.toId === friend.linked_user_id)) ||
-             ((t.fromId === friend.id || t.fromId === friend.linked_user_id) && t.toId === currentUser.id))) {
-            combinedItems.push({
-                type: 'transaction',
-                date: t.date,
-                id: t.id,
-                data: t,
-                amount: t.amount 
-            });
+        if (!t.groupId && !t.deleted) {
+            if (matchesMember(t.fromId, globalMeRef) && matchesMember(t.toId, globalFriendRef)) {
+                // I paid
+                combinedItems.push({
+                    type: 'transaction',
+                    date: t.date,
+                    id: t.id,
+                    data: t,
+                    amount: t.amount 
+                });
+            } else if (matchesMember(t.fromId, globalFriendRef) && matchesMember(t.toId, globalMeRef)) {
+                // They paid
+                 combinedItems.push({
+                    type: 'transaction',
+                    date: t.date,
+                    id: t.id,
+                    data: t,
+                    amount: t.amount 
+                });
+            }
         }
     });
 
-
-    
     return combinedItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [friend, currentUser, groups, expenses, transactions])
 
