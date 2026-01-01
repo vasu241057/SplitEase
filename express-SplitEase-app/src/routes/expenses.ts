@@ -1,6 +1,6 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { recalculateBalances } from '../utils/recalculate';
+import { recalculateBalances, recalculateGroupBalances } from '../utils/recalculate';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -293,17 +293,17 @@ router.post('/', async (req, res) => {
   
   // Cast to expected shape (RPC returns JSONB which loses some type info, but runtime checks are fine)
   const expense: any = expenseRecord;
-  expense.splits = preparedSplits; // Ensure local consistency if needed for logic below (Wait, RPC returns expense only?)
-  // RPC returns expense record. Does it return splits? Current SQL returns `v_expense_record`.
-  // RecalculateBalances does its own fetch.
-  // But line 274: `const newExpense = { ...expense, splits }`. It uses the `splits` from request body (original).
-  // So validation holds.
-
+  expense.splits = preparedSplits; 
+  
   console.log('[BALANCE_DEBUG] Expense atomic creation successful. ID:', expense.id);
   console.log('[BALANCE_DEBUG] ===== TRIGGERING RECALCULATE BALANCES =====');
 
   try {
-    await recalculateBalances(supabase);
+    if (groupId) {
+        await recalculateGroupBalances(supabase, groupId);
+    } else {
+        await recalculateBalances(supabase);
+    }
     console.log('[BALANCE_DEBUG] RecalculateBalances completed successfully');
   } catch (e: any) {
      console.error('[BALANCE_DEBUG] Error in recalculateBalances:', e); 
@@ -401,7 +401,11 @@ router.put('/:id', async (req, res) => {
     return res.status(500).json({ error: rpcError.message });
   }
 
-  await recalculateBalances(supabase);
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
 
   // Notify
   await notifyExpenseParticipants(req, id, 'updated an expense', `${description} was updated`);
@@ -413,9 +417,10 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   const supabase = createSupabaseClient();
 
-  // Notify BEFORE deletion/hiding, so we can still fetch details.
-  // Actually we just mark as deleted, so fetching is fine.
-  
+  // Fetch expense info before update to know the Group ID for scoped recalc
+  const { data: expenseBefore } = await supabase.from('expenses').select('group_id').eq('id', id).single();
+  const groupId = expenseBefore?.group_id;
+
   const { error } = await supabase
     .from('expenses')
     .update({ deleted: true })
@@ -423,7 +428,11 @@ router.delete('/:id', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  await recalculateBalances(supabase);
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
 
   // System Comment
   await supabase.from('comments').insert({
@@ -451,9 +460,16 @@ router.post('/:id/restore', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  await recalculateBalances(supabase);
-
+  // Fetch after restore to get group_id (or could have fetched before)
   const { data } = await supabase.from('expenses').select('*').eq('id', id).single();
+  const groupId = data?.group_id;
+
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
+
   // System Comment
   await supabase.from('comments').insert({
     entity_type: 'expense',

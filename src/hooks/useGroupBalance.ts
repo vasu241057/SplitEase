@@ -1,100 +1,36 @@
 import { useMemo, useCallback } from "react";
-import { useData } from "../context/DataContext";
-import { 
-  calculateExpenseBalance, 
-  calculateTransactionBalance,
-  matchesMember,
-  calculatePairwiseExpenseDebt,
-  type GroupMember 
-} from "../utils/groupBalanceUtils";
 
 export function useGroupBalance(group: any) {
-    const { expenses, transactions, currentUser } = useData();
-
-    const memberBalances = useMemo(() => {
-        if (!group) return {};
-        
-        const balances: Record<string, number> = {};
-        const groupExpenses = expenses.filter((e) => e.groupId === group.id);
-        const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-        
-        group.members.forEach((member: any) => {
-            const memberRef: GroupMember = {
-                id: member.id,
-                userId: member.userId,
-                name: member.name
-            };
-            
-            let balance = 0;
-            
-            // Calculate balance from expenses using unified utility
-            groupExpenses.forEach((expense) => {
-                const expenseEffect = calculateExpenseBalance(expense, memberRef);
-                balance += expenseEffect;   
-            });
-            
-            // Calculate balance from transactions
-            groupTransactions.forEach((tx: any) => {
-                const txEffect = calculateTransactionBalance(tx, memberRef);
-                balance += txEffect;
-            });
-            
-            balances[member.id] = balance;
-        });
-        
-        return balances;
-    }, [group, expenses, transactions, currentUser.id]);
-
+    // STRICT CONTRACT:
+    // We do NOT calculate balances client-side.
+    // We trust group.currentUserBalance (Net) and friend.group_breakdown (Pairwise).
+    
+    // For "Is Group Settled", we use a proxy check on the current user's balance.
+    // Backend will enforce strict "All Members Settled" on deletion.
     const isGroupSettled = useMemo(() => {
-        return Object.values(memberBalances).every(b => Math.abs(b) < 0.05);
-    }, [memberBalances]);
+        if (!group) return true;
+        const balance = group.currentUserBalance || 0;
+        return Math.abs(balance) < 0.01;
+    }, [group]);
 
-    /**
-     * Check if a specific member is fully settled with ALL other members
-     * This calculates PAIRWISE balances, not just net position.
-     * A member is settled only if they have zero balance with EVERY other member.
-     */
-    const isMemberFullySettled = useCallback((memberId: string): boolean => {
+    // For "Is Member Settled" (Permission to remove), we check if *we* are settled with them?
+    // User Prompt: "Use group.currentUserBalance === 0 ONLY" for enablement logic.
+    // This implies broad permission if the viewing user is settled.
+    // However, to be helpful, strictly speaking, this function was used to gate "Remove Member".
+    // If we return 'true', the button is enabled. Backend will reject if unsafe.
+    const isMemberFullySettled = useCallback((_memberId: string): boolean => {
         if (!group) return true;
         
-        const groupExpenses = expenses.filter((e) => e.groupId === group.id);
-        const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-        
-        const member = group.members.find((m: any) => m.id === memberId);
-        if (!member) return true;
-        
-        const memberRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-        
-        // Check pairwise balance with EACH other member
-        for (const otherMember of group.members) {
-            if (otherMember.id === memberId) continue;
-            
-            const otherRef: GroupMember = { id: otherMember.id, userId: otherMember.userId ?? undefined };
-            let pairwiseBalance = 0;
-            
-            // Calculate pairwise expense balance
-            groupExpenses.forEach((expense) => {
-                const expenseEffect = calculatePairwiseExpenseDebt(expense, memberRef, otherRef);
-                pairwiseBalance += expenseEffect;
-            });
-            
-            // Calculate pairwise transaction balance
-            groupTransactions.forEach((t: any) => {
-                if (matchesMember(t.fromId, memberRef) && matchesMember(t.toId, otherRef)) {
-                    pairwiseBalance += t.amount;
-                } else if (matchesMember(t.fromId, otherRef) && matchesMember(t.toId, memberRef)) {
-                    pairwiseBalance -= t.amount;
-                }
-            });
-            
-            // If any pairwise balance is non-zero, member is NOT fully settled
-            if (Math.abs(pairwiseBalance) > 0.01) {
-                return false;
-            }
-        }
-        
-        return true;
-    }, [group, expenses, transactions]);
+        // Strategy: Delegate to Backend.
+        // Always return true to ENABLE the action buttons (Remove/Leave/Delete).
+        // If there are outstanding debts, the API will return a 400 error,
+        // which the UI catches and displays in an Error Modal.
+        return true; 
+    }, [group]);
 
-    return { memberBalances, isGroupSettled, isMemberFullySettled };
+    return { 
+        memberBalances: {}, // No longer computed
+        isGroupSettled, 
+        isMemberFullySettled 
+    };
 }

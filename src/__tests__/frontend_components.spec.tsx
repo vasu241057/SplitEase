@@ -108,8 +108,11 @@ describe('Phase 2 Frontend Component Coverage', () => {
                 id: 'friend_active', 
                 name: 'Active Ghost', 
                 isGroupMemberOnly: true,
-                balance: 0,
-                linked_user_id: 'friend_active_uid'
+                balance: 50, // Matches expense share (50)
+                linked_user_id: 'friend_active_uid',
+                group_breakdown: [
+                    { groupId: 'g1', name: 'Group 1', amount: 50 }
+                ]
             };
 
             const expense = {
@@ -145,7 +148,14 @@ describe('Phase 2 Frontend Component Coverage', () => {
 
     describe('Section D: Activity Feed Accuracy (FriendDetail)', () => {
         it('displays "You lent" when I paid for friend (Personal Expense)', () => {
-            const friend = { id: 'friend_bob', name: 'Bob', balance: 50 };
+            const friend = { 
+                id: 'friend_bob', 
+                name: 'Bob', 
+                balance: 50,
+                // Match invariant: Balance (50) == Sum of Breakdowns (50)
+                group_breakdown: [{ groupId: 'g1', name: 'G1', amount: 50 }]
+            };
+
             const expense = {
                 id: 'e1', groupId: undefined, description: 'Dinner', amount: 100, payerId: 'user_me', date: new Date().toISOString(),
                 splits: [
@@ -178,7 +188,12 @@ describe('Phase 2 Frontend Component Coverage', () => {
         });
 
         it('displays "You borrowed" when friend paid for me (Personal Expense)', () => {
-             const friend = { id: 'friend_alice', name: 'Alice', balance: -50 };
+             const friend = { 
+                 id: 'friend_alice', 
+                 name: 'Alice', 
+                 balance: -50,
+                 group_breakdown: [{ groupId: 'g1', name: 'G1', amount: -50 }]
+             };
              const expense = {
                 id: 'e2', groupId: undefined, description: 'Uber', amount: 100, payerId: 'friend_alice', date: new Date().toISOString(),
                 splits: [

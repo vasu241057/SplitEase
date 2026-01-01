@@ -61,7 +61,14 @@ vi.mock('../../context/DataContext', () => ({
         ],
         friends: [
              { id: 'friend_A', name: 'Me' },
-             { id: 'friend_B', name: 'Other' }
+             { 
+                 id: 'friend_B', 
+                 name: 'Other',
+                 group_breakdown: [
+                     // Positive = Friend owes Me (to match test expectation "owes you")
+                     { groupId: 'group_123', name: 'Test Group', amount: 50 } 
+                 ]
+             }
         ],
         currentUser: { id: 'user_A' },
         expenses: [

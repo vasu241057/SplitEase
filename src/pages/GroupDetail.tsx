@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
-import { matchesMember, calculatePairwiseExpenseDebt, type GroupMember } from "../utils/groupBalanceUtils"
+import { matchesMember, type GroupMember } from "../utils/groupBalanceUtils"
 import { simplifyGroupDebts, type MemberBalance } from "../utils/debtSimplification"
 
 export function GroupDetail() {
@@ -137,57 +137,16 @@ export function GroupDetail() {
   }, [groupActivity]);
 
   // Calculate Net Balances for Simplification
+  // STRICT CONTRACT: Use group.user_balances (Backend Artifact)
   const netBalances = useMemo<MemberBalance[]>(() => {
-    if (!group) return [];
+    if (!group || !group.user_balances) return [];
     
-    const balances = new Map<string, number>();
-    group.members.forEach(m => balances.set(m.id, 0));
-
-    // Expenses
-    groupExpenses.forEach(exp => {
-        // Check if multi-payer
-        const payers = exp.splits.filter(s => (s.paidAmount || 0) > 0);
-        const isMultiPayer = payers.length > 1;
-        
-        if (isMultiPayer) {
-            // MULTI-PAYER: Each payer gets credit for what they paid
-            exp.splits.forEach(split => {
-                const member = group.members.find(m => matchesMember(split.userId, { id: m.id, userId: m.userId || undefined }));
-                if (member && (split.paidAmount || 0) > 0) {
-                    const before = balances.get(member.id) || 0;
-                    balances.set(member.id, before + (split.paidAmount || 0));
-                }
-            });
-        } else {
-            // SINGLE PAYER: Original logic
-            const payerMember = group.members.find(m => matchesMember(exp.payerId, { id: m.id, userId: m.userId || undefined }));
-            if (payerMember) {
-                const before = balances.get(payerMember.id) || 0;
-                balances.set(payerMember.id, before + exp.amount);
-            }
-        }
-
-        // Splits (deduct share from each participant)
-        exp.splits.forEach(split => {
-             const splitMember = group.members.find(m => matchesMember(split.userId, { id: m.id, userId: m.userId || undefined }));
-             if (splitMember) {
-                 const before = balances.get(splitMember.id) || 0;
-                 balances.set(splitMember.id, before - (split.amount || 0));
-             }
-        });
-    });
-
-    // Transactions
-    groupTransactions.forEach(tx => {
-        const fromMember = group.members.find(m => matchesMember(tx.fromId, { id: m.id, userId: m.userId || undefined }));
-        const toMember = group.members.find(m => matchesMember(tx.toId, { id: m.id, userId: m.userId || undefined }));
-
-        if (fromMember) balances.set(fromMember.id, (balances.get(fromMember.id) || 0) + tx.amount);
-        if (toMember) balances.set(toMember.id, (balances.get(toMember.id) || 0) - tx.amount);
-    });
-
-    return Array.from(balances.entries()).map(([userId, balance]) => ({ userId, balance }));
-  }, [group, groupExpenses, groupTransactions]);
+    // Map the backend user_balances object (userId -> balance) to the array format
+    return Object.entries(group.user_balances).map(([userId, balance]) => ({
+        userId,
+        balance: Number(balance) || 0
+    }));
+  }, [group]);
 
   // Derived Simplified Debts
   const calculationResult = useMemo(() => {
@@ -219,7 +178,7 @@ export function GroupDetail() {
        };
 
        if (simplifyDebts && !simplificationError) {
-           // --- SIMPLIFIED MODE ---
+           // --- SIMPLIFIED MODE (Unchanged) ---
            return simplifiedDebts
                 .filter(d => d.from === meRef.id || d.to === meRef.id)
                 .map(debt => {
@@ -238,38 +197,32 @@ export function GroupDetail() {
                 .filter((m): m is NonNullable<typeof m> => m !== null);
 
        } else {
-           // --- RAW LEDGER MODE ---
-           const groupExpenses = expenses.filter(e => e.groupId === group.id);
-           const groupTransactions = transactions.filter(t => t.groupId === group.id && !t.deleted);
-           
-           const results = group.members.map(member => {
+           // --- RAW LEDGER MODE (Backend Driven) ---
+           // STRICT CONTRACT: Use friend.group_breakdown
+           return group.members.map(member => {
+                // Skip Me
                 if (member.id === currentUser.id || member.userId === currentUser.id) {
                     return null;
                 }
-                
-                const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-                let balance = 0;
-    
-                 groupExpenses.forEach((expense) => {
-                     const expenseEffect = calculatePairwiseExpenseDebt(expense, meRef, themRef);
-                     balance += expenseEffect;
-                 });
-                 
-                 groupTransactions.forEach((t) => {
-                     if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
-                         balance += t.amount;
-                     } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
-                         balance -= t.amount;
-                     }
-                 });
-                 
-                 const isSettled = Math.abs(balance) < 0.01;
-                 return { member, balance, isSettled };
-           }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
 
-           return results;
+                // Find the Friend Record
+                // The group.members 'id' corresponds to the 'friend.id' in the backend schema for this user context
+                const friend = friends.find(f => f.id === member.id);
+                
+                let balance = 0;
+                if (friend && friend.group_breakdown) {
+                    const breakdown = friend.group_breakdown.find(b => b.groupId === group.id);
+                    if (breakdown) {
+                        balance = breakdown.amount; // Positive = Friend owes Me. Negative = I owe Friend.
+                    }
+                }
+
+                const isSettled = Math.abs(balance) < 0.01;
+                return { member, balance, isSettled };
+
+           }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
        }
-  }, [group, expenses, transactions, currentUser.id, simplifyDebts, simplifiedDebts]);
+  }, [group, friends, currentUser.id, simplifyDebts, simplifiedDebts, simplificationError]);
 
 
   if (loading) {
@@ -756,28 +709,17 @@ export function GroupDetail() {
                              }
                          }
                      } else {
-                         // RAW PAIRWISE CALCULATION
-                        groupExpenses.forEach((expense) => {
-                            const expenseEffect = calculatePairwiseExpenseDebt(
-                                expense,
-                                meRef, // ME
-                                { id: member.id, userId: member.userId ?? undefined } // THEM
-                            );
-                            balance += expenseEffect;
-                        });
-                        const groupTransactions = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
-                        groupTransactions.forEach((t: any) => {
-                            // Clean use of matchesMember via unified object
-                            // ME -> THEM: I paid (positive balance for me if I am creditor? Wait.)
-                            // Logic: if I paid, balance += amount (They owe Me)
-                            const themRef: GroupMember = { id: member.id, userId: member.userId ?? undefined };
-                            
-                            if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, themRef)) {
-                                balance += t.amount;
-                            } else if (matchesMember(t.fromId, themRef) && matchesMember(t.toId, meRef)) {
-                                balance -= t.amount;
-                            }
-                        });
+                         // RAW PAIRWISE CALCULATION (Backend Driven)
+                         const friend = friends.find(f => f.id === member.id);
+                         if (friend && friend.group_breakdown) {
+                             const breakdown = friend.group_breakdown.find(b => b.groupId === group.id);
+                             if (breakdown) {
+                                 balance = breakdown.amount; 
+                                 // Note: Positive = They owe Me. Negative = I owe Them.
+                                 // SettleUp Logic below expects: 
+                                 // "isOwe = balance < 0" (I owe them) -> Correct.
+                             }
+                         }
                      }
 
                      const isOwe = balance < 0;

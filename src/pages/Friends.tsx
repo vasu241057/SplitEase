@@ -11,33 +11,19 @@ import { cn } from "../utils/cn"
 import { TotalBalance } from "../components/TotalBalance"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Skeleton } from "../components/ui/skeleton"
-import { getFriendBalanceBreakdown } from "../utils/balanceBreakdown"
 import { A2HSPrompt } from "../components/A2HSPrompt"
 
 const NOTIF_BANNER_DISMISSED_KEY = "splitease_notif_banner_dismissed"
 const A2HS_INITIAL_COUNT_KEY = "splitease_a2hs_initial_count"
 
 export function Friends() {
-  const { friends, loading, currentUser, groups, expenses, transactions, allExpenses } = useData()
+  const { friends, loading, allExpenses } = useData()
   const { user } = useAuth()
   
-  // Calculate effective balances - use breakdown sum for group-only friends
+  // Calculate effective balances - use backend data strictly
   const friendsWithEffectiveBalance = useMemo(() => {
-    if (!currentUser) return friends;
-    
-    return friends.map(friend => {
-      const isGroupMemberOnly = (friend as any).isGroupMemberOnly;
-      
-      if (isGroupMemberOnly) {
-        // For group-only friends, calculate balance from breakdown
-        const breakdown = getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
-        const calculatedBalance = breakdown.reduce((sum, item) => sum + item.amount, 0);
-        return { ...friend, balance: calculatedBalance, _calculatedFromBreakdown: true };
-      }
-      
-      return friend;
-    });
-  }, [friends, currentUser, groups, expenses, transactions]);
+    return friends;
+  }, [friends]);
 
   // Notification banner state - only show once
   const [showNotifBanner, setShowNotifBanner] = useState(() => {
@@ -196,7 +182,8 @@ export function Friends() {
                     
                     {/* Buckets Breakdown */}
                     {(() => {
-                         const breakdown = getFriendBalanceBreakdown(friend, currentUser, groups, expenses, transactions);
+                         // Use Backend Provided Breakdown
+                         const breakdown = friend.group_breakdown || [];
                          
                          if (breakdown.length === 0) return null;
 
@@ -209,7 +196,7 @@ export function Friends() {
                             <div className="space-y-1 mt-2">
                                 {visibleBreakdown.map((item, idx) => (
                                     <div key={idx} className="flex justify-between text-xs">
-                                        <span className="text-muted-foreground truncate max-w-[150px]">{item.isGroup ? `In "${item.name}"` : item.name}</span>
+                                        <span className="text-muted-foreground truncate max-w-[150px]">{item.name}</span>
                                         <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
                                             {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
                                         </span>

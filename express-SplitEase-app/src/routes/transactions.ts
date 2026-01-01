@@ -1,6 +1,6 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { recalculateBalances } from '../utils/recalculate';
+import { recalculateBalances, recalculateGroupBalances } from '../utils/recalculate';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -311,7 +311,11 @@ router.post('/settle-up', async (req, res) => {
   console.log('╠───────────────────────────────────────────────────────────────────');
   console.log('║ [CALLING] recalculateBalances()...');
 
-  await recalculateBalances(supabase);
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
 
   // Fetch friend balance AFTER recalculation
   const { data: friendAfter } = await supabase
@@ -379,6 +383,10 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   const supabase = createSupabaseClient();
 
+  // Fetch group_id before delete
+  const { data: txBefore } = await supabase.from('transactions').select('group_id').eq('id', id).single();
+  const groupId = txBefore?.group_id;
+
   const { error } = await supabase
     .from('transactions')
     .update({ deleted: true })
@@ -386,7 +394,11 @@ router.delete('/:id', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  await recalculateBalances(supabase);
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
 
   // System Comment
   await supabase.from('comments').insert({
@@ -414,9 +426,15 @@ router.post('/:id/restore', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  await recalculateBalances(supabase);
-
+  // Fetch group_id after restore
   const { data } = await supabase.from('transactions').select('*, friend:friends(owner_id, linked_user_id)').eq('id', id).single();
+  const groupId = data?.group_id;
+
+  if (groupId) {
+    await recalculateGroupBalances(supabase, groupId);
+  } else {
+    await recalculateBalances(supabase);
+  }
   
   // Format return
   let fromId = '';

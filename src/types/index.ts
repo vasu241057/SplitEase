@@ -32,6 +32,7 @@ export type Group = {
   createdBy?: string // User ID of the group creator (admin)
   simplifyDebtsEnabled?: boolean | null // Audit only for Step 1
   currentUserBalance?: number
+  user_balances?: Record<string, number>
 }
 
 export type SplitType = "equal" | "unequal" | "shares" | "percentage"

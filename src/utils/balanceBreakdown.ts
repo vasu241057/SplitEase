@@ -1,7 +1,7 @@
 /**
  * @deprecated
- * Friend balance breakdown is now computed by backend.
- * Do not use for new features.
+ * DO NOT USE. Backend is the sole source of truth.
+ * This file exists only for historical reference and will be deleted.
  */
 
 import type { Friend, User, Group, Expense, Transaction } from "../types"

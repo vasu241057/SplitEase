@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Card } from "../components/ui/card"
 import { cn } from "../utils/cn"
-// getFriendBalanceBreakdown removed
+
 import { calculatePairwiseExpenseDebt, matchesMember } from "../utils/groupBalanceUtils"
 
 export function FriendDetail() {
@@ -45,6 +45,21 @@ export function FriendDetail() {
       id: b.groupId // helper for keys
     }));
   }, [friend?.group_breakdown]);
+
+  // DEV-ONLY: Invariant Assertion
+  useEffect(() => {
+    if (!friend) return;
+    const breakdownSum = breakdown.reduce((acc, b) => acc + b.amount, 0);
+    // Allow small floating point diff
+    if (Math.abs(friend.balance - breakdownSum) > 0.1) {
+       console.error('[INVARIANT VIOLATION] Friend Balance != Breakdown Sum', {
+          id: friend.id,
+          balance: friend.balance,
+          breakdownSum,
+          diff: friend.balance - breakdownSum
+       });
+    }
+  }, [friend, breakdown]);
 
 
   // Memoize all sorted items (Groups + Personal) for the timeline
