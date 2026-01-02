@@ -21,9 +21,7 @@ export function Friends() {
   const { user } = useAuth()
   
   // Calculate effective balances - use backend data strictly
-  const friendsWithEffectiveBalance = useMemo(() => {
-    return friends;
-  }, [friends]);
+  const friendsWithEffectiveBalance = friends;
 
   // Notification banner state - only show once
   const [showNotifBanner, setShowNotifBanner] = useState(() => {
@@ -58,9 +56,15 @@ export function Friends() {
   // 2. Show group-only friends ONLY if they have a non-zero balance
   const visibleFriends = useMemo(() => {
     return friendsWithEffectiveBalance.filter(friend => {
+      // Use the derived effective balance
+      const hasBalance = Math.abs(friend.balance) > 0.01;
+      
+       // Check if explicit or output of minimal graph
       const isGroupMemberOnly = (friend as any).isGroupMemberOnly;
+      
+      // SHOW IF: Explicit Friend OR Has Debt
       if (!isGroupMemberOnly) return true;
-      return Math.abs(friend.balance) > 0.01;
+      return hasBalance; 
     });
   }, [friendsWithEffectiveBalance]);
 

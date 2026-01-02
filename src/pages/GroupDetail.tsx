@@ -10,7 +10,6 @@ import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
 import { matchesMember, type GroupMember } from "../utils/groupBalanceUtils"
-import { simplifyGroupDebts, type MemberBalance } from "../utils/debtSimplification"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -31,6 +30,7 @@ export function GroupDetail() {
 
   // Simplify Debts Preference (Driven by DB now)
   const simplifyDebts = group?.simplifyDebtsEnabled === true;
+  const [showRawView, setShowRawView] = useState(false); // New Toggle for Step 3 View Control
 
   const handleRevertToRaw = async () => {
       if (!group) return;
@@ -62,17 +62,7 @@ export function GroupDetail() {
 
 
   useEffect(() => {
-    if (group) {
-        // AUDIT LOG: Applying View
-        console.log('[SIMPLIFY STATE]', {
-            groupId: group.id,
-            enabled: group.simplifyDebtsEnabled,
-            screenName: 'GroupDetail'
-        });
-
-        // [GROUP TX AUDIT] Ground Truth Check - REMOVED
-        // [GROUP EXPENSE AUDIT] Ground Truth Check - REMOVED
-    }
+    // Audit logs removed
   }, [group?.id, group?.simplifyDebtsEnabled, transactions, expenses, group?.name]);
 
   // Use shared hook for balances
@@ -136,38 +126,20 @@ export function GroupDetail() {
     }));
   }, [groupActivity]);
 
-  // Calculate Net Balances for Simplification
-  // STRICT CONTRACT: Use group.user_balances (Backend Artifact)
-  const netBalances = useMemo<MemberBalance[]>(() => {
-    if (!group || !group.user_balances) return [];
-    
-    // Map the backend user_balances object (userId -> balance) to the array format
-    return Object.entries(group.user_balances).map(([userId, balance]) => ({
-        userId,
-        balance: Number(balance) || 0
-    }));
+  // Derived Simplified Debts (BACKEND DRIVEN)
+  const simplifiedDebts = useMemo(() => {
+     if (!group || !group.simplified_debts) return [];
+     return group.simplified_debts;
   }, [group]);
 
-  // Derived Simplified Debts
-  const calculationResult = useMemo(() => {
-      if (!simplifyDebts) return [];
-      try {
-          return simplifyGroupDebts(netBalances);
-      } catch (e) {
-          console.error("Simplification failed:", e);
-          return null;
-      }
-  }, [simplifyDebts, netBalances]);
-
-  const simplificationError = simplifyDebts && calculationResult === null;
-  const simplifiedDebts = calculationResult || [];
+  const simplificationError = false; // Backend handles errors (returns empty array), so no client error state needed.
 
 
   // View-Specific Balances (For the Cards "You owe X") - Using unified utilities
+  // View-Specific Balances (Cards)
   const balancesRelativeToMe = useMemo(() => {
        if (!group) return [];
        
-       // Find current user's member record in the group
        const myMemberRecord = group.members.find(
            (m: any) => m.id === currentUser.id || m.userId === currentUser.id
        );
@@ -177,16 +149,20 @@ export function GroupDetail() {
            userId: currentUser.id 
        };
 
-       if (simplifyDebts && !simplificationError) {
-           // --- SIMPLIFIED MODE (Unchanged) ---
+       // DISPLAY LOGIC:
+       // If Simplify Enabled AND NOT "Show Raw" -> Use Backend Simplified Edges
+       if (simplifyDebts && !showRawView) {
            return simplifiedDebts
                 .filter(d => d.from === meRef.id || d.to === meRef.id)
                 .map(debt => {
                     const isOwe = debt.from === meRef.id;
                     const otherId = isOwe ? debt.to : debt.from;
-                    const member = group.members.find(m => m.id === otherId);
+                    const member = group.members.find(m => m.id === otherId); // Map userId -> Member
+                    // Note: simplified_debts uses global UserIds usually? 
+                    // `recalculate.ts` uses `effectiveId`. 
+                    // If member has `userId` set, we match against it. Matches member.userId OR member.id.
                     
-                    if (!member) return null;
+                    if (!member) return null; // Should not happen if data integrity holds
 
                     return {
                         member,
@@ -198,22 +174,26 @@ export function GroupDetail() {
 
        } else {
            // --- RAW LEDGER MODE (Backend Driven) ---
-           // STRICT CONTRACT: Use friend.group_breakdown
            return group.members.map(member => {
-                // Skip Me
-                if (member.id === currentUser.id || member.userId === currentUser.id) {
-                    return null;
-                }
+                if (member.id === currentUser.id || member.userId === currentUser.id) return null;
 
-                // Find the Friend Record
-                // The group.members 'id' corresponds to the 'friend.id' in the backend schema for this user context
                 const friend = friends.find(f => f.id === member.id);
-                
                 let balance = 0;
+                
                 if (friend && friend.group_breakdown) {
                     const breakdown = friend.group_breakdown.find(b => b.groupId === group.id);
                     if (breakdown) {
-                        balance = breakdown.amount; // Positive = Friend owes Me. Negative = I owe Friend.
+                        // PRIMARY CHANGE: If user requests Raw View, we read rawAmount.
+                        // Otherwise (if Simplification OFF globally), amount IS rawAmount.
+                        // Wait, if `simplifyDebts` is OFF, then breakdown.amount IS Raw (from backend logic).
+                        // If `simplifyDebts` is ON, breakdown.amount IS Effective.
+                        // So if `showRawView` is TRUE, we must explicitly read `rawAmount`.
+                        
+                        if (showRawView && breakdown.rawAmount !== undefined) {
+                             balance = breakdown.rawAmount;
+                        } else {
+                             balance = breakdown.amount;
+                        }
                     }
                 }
 
@@ -222,7 +202,7 @@ export function GroupDetail() {
 
            }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
        }
-  }, [group, friends, currentUser.id, simplifyDebts, simplifiedDebts, simplificationError]);
+  }, [group, friends, currentUser.id, simplifyDebts, simplifiedDebts, showRawView]);
 
 
   if (loading) {
@@ -334,30 +314,61 @@ export function GroupDetail() {
             </div>
         )}
 
-        {/* Simplified View Banner - Explain & Revert */}
+        {/* Simplified View Banner - Explain & Revert & Toggle */}
         {simplifyDebts && !simplificationError && (
-             <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
-                 <div className="flex-1">
-                     <p className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
-                         <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                         Simplified View (Group)
-                     </p>
-                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                        <p>This view shows a simplified payment route.</p>
-                        <p>It does NOT change what anyone owes overall.</p>
-                        <p>You can always switch back to the original ledger.</p>
-                     </div>
-                 </div>
-                 <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-auto py-1 px-2 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                    onClick={handleRevertToRaw}
-                    disabled={isReverting}
-                 >
-                     {isReverting ? "Reverting..." : "View Original Debts"}
-                 </Button>
-             </div>
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
+                  <div className="flex-1">
+                      <p className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
+                          {showRawView ? (
+                              <>
+                                <Info className="h-4 w-4" />
+                                Viewing Original Debts
+                              </>
+                          ) : (
+                              <>
+                                <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                                Simplified View (Group)
+                              </>
+                          )}
+                      </p>
+                      <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                         {showRawView ? (
+                             <p>You are seeing the raw pairwise debts before simplification.</p>
+                         ) : (
+                             <>
+                                <p>This view shows a simplified payment route.</p>
+                                <p>It does NOT change what anyone owes overall.</p>
+                             </>
+                         )}
+                      </div>
+                  </div>
+                  <div className="flex flex-col gap-1 items-end">
+                      <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground uppercase font-semibold">
+                                {showRawView ? "Raw" : "Simplified"}
+                            </span>
+                           <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-6 px-2 text-xs"
+                                onClick={() => setShowRawView(!showRawView)}
+                            >
+                                {showRawView ? "Simplified" : "Original"}
+                            </Button>
+                      </div>
+                       {!showRawView && (
+                           <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-auto py-0.5 px-2 text-[10px] text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                                onClick={handleRevertToRaw}
+                                disabled={isReverting}
+                            >
+                                {isReverting ? "..." : "Revert"}
+                            </Button>
+                       )}
+                   </div>
+              </div>
         )}
 
         {isGroupSettled ? (

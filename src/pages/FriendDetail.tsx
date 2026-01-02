@@ -20,30 +20,27 @@ export function FriendDetail() {
   // IMPORTANT:
   // Friend balances MUST ALWAYS use RAW ledger math.
   // Group-level simplified debts must NEVER affect this screen.
-  useEffect(() => {
-    if (!friend) return;
-
-    const mutualGroups = groups.filter(g =>
-      g.members.some(m => m.userId === currentUser.id || m.id === currentUser.id)
-    );
-
-    mutualGroups.forEach(g => {
-      console.log('[SIMPLIFY STATE]', {
-        groupId: g.id,
-        enabled: g.simplifyDebtsEnabled,
-        screenName: 'FriendDetail'
-      });
-    });
-  }, [friend?.id, groups, currentUser.id]);
+  // Group-level simplifications are handled via reading the amount/rawAmount fields directly.
+  // Debug logging removed.
+  // Calculate effective balances - use backend data strictly
 
   // Use backend provided breakdown
   const breakdown = useMemo(() => {
-    return (friend?.group_breakdown || []).map(b => ({
-      name: b.name,
-      amount: b.amount,
-      isGroup: true,
-      id: b.groupId // helper for keys
-    })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
+    return (friend?.group_breakdown || []).map(b => {
+      // [VISUAL_BADGE] Determine if this amount is simplified
+      // If rawAmount exists and is different from effective Amount, it's routed.
+      // Using a small epsilon for float comparison.
+      const isRouted = b.rawAmount !== undefined && Math.abs(b.amount - b.rawAmount) > 0.01;
+      
+      return {
+        name: b.name,
+        amount: b.amount, // EFFECTIVE Amount (Primary Display)
+        rawAmount: b.rawAmount, // Available for debug/future
+        isGroup: true,
+        id: b.groupId, // helper for keys
+        isRouted // For UI Badge
+      };
+    }).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
   }, [friend?.group_breakdown]);
 
   // DEV-ONLY: Invariant Assertion
@@ -91,41 +88,24 @@ export function FriendDetail() {
         
         if (!groupMe || !groupFriend) return;
 
-        // Construct correct refs for this group context (Crucial for Multi-Payer)
-        const meRef = { id: groupMe.id, userId: groupMe.userId || currentUser.id };
-        const friendRef = { id: groupFriend.id, userId: groupFriend.userId || friend.linked_user_id };
+
 
         const gExpenses = expenses.filter(e => e.groupId === group.id);
         const gTrans = transactions.filter((t: any) => t.groupId === group.id && !t.deleted);
 
-        // Calculate Balance using Invariant Utility
-        let bal = 0;
-        let latestDate = new Date(0).toISOString(); // Default to epoch
+        // [VIOLATION FIX] Use Backend Artifact for Balance
+        const breakdownItem = (friend.group_breakdown || []).find(b => b.groupId === group.id);
+        const bal = breakdownItem ? breakdownItem.amount : 0;
+        
+        let latestDate = new Date(0).toISOString();
 
+        // Keep date logic only - No financial math
         gExpenses.forEach(e => {
-             // Use the Gold Standard Utility
-             // This handles Multi-Payer correctly by calculating the precise pairwise debt effect
-             const debt = calculatePairwiseExpenseDebt(e, meRef, friendRef);
-             
-             // If there is a debt effect, update balance
-             if (Math.abs(debt) > 0.001) {
-                 bal += debt;
-                 // Update latest date if this expense is relevant
-                 if (new Date(e.date) > new Date(latestDate)) latestDate = e.date;
-             }
+             if (new Date(e.date) > new Date(latestDate)) latestDate = e.date;
         });
 
         gTrans.forEach((t: any) => {
-            // Check direction: Me -> Friend (I paid, balance increases)
-            if (matchesMember(t.fromId, meRef) && matchesMember(t.toId, friendRef)) {
-                 bal += t.amount;
-                 if (new Date(t.date) > new Date(latestDate)) latestDate = t.date;
-            } 
-            // Check direction: Friend -> Me (Friend paid, balance decreases)
-            else if (matchesMember(t.fromId, friendRef) && matchesMember(t.toId, meRef)) {
-                 bal -= t.amount;
-                 if (new Date(t.date) > new Date(latestDate)) latestDate = t.date;
-            }
+             if (new Date(t.date) > new Date(latestDate)) latestDate = t.date;
         });
 
         combinedItems.push({
@@ -239,7 +219,14 @@ export function FriendDetail() {
             <div className="text-left space-y-2 border-t pt-4">
                 {visibleBreakdown.map((item, idx) => (
                     <div key={idx} className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">{item.isGroup ? `In "${item.name}"` : item.name}</span>
+                        <span className="text-muted-foreground flex items-center gap-1">
+                            {item.isGroup ? `In "${item.name}"` : item.name}
+                            {item.isRouted && (
+                                <span title="Simplified Debt (Routed)" className="text-[10px] cursor-help opacity-70">
+                                    ⚡
+                                </span>
+                            )}
+                        </span>
                         <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
                             {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
                         </span>

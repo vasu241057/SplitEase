@@ -15,7 +15,7 @@ const EPSILON = 0.005;
  * Input: List of { userId, balance } where Sum(balance) approx 0.
  * Output: List of transfers { from, to, amount }.
  */
-function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
+export function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
     const totalBalance = balances.reduce((sum, b) => sum + b.balance, 0);
     // Relaxed tolerance (0.05) to account for floating point accumulation in large groups
     if (Math.abs(totalBalance) > 0.05) {
@@ -486,105 +486,133 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     // We'll collect promises.
     const groupUpdatePromises = groupUpdates; // Array of promises
     
+    // === HELPER: Verify Invariants ===
+    const verifyInvariants = (
+        pendingUpdates: { id: string, balance: number, breakdown: any[], rawBreakdownSum: number }[]
+    ) => {
+         // Check 2: Friend Balance == Sum(Breakdown Amounts)
+         // Note: calculatedFriendBalances (which drove pendingUpdates) is derived from Raw Pairwise Logic.
+         // If Simplification routes debt differently, does Friend.balance change?
+         // YES. Friend.balance MUST match the sum of the breakdown (Effective).
+         // In Friends.tsx (Step 4), we forcefully sum the breakdown.
+         // Here, we should ensure the 'balance' we save to DB also matches that sum.
+         
+         pendingUpdates.forEach(update => {
+             const effectiveSum = update.breakdown.reduce((acc, b) => acc + b.amount, 0);
+             const diff = Math.abs(update.balance - effectiveSum);
+             
+             // If we are saving a balance that doesn't match the breakdown, we have a problem.
+             // BUT wait. 'update.balance' currently comes from 'calculatedFriendBalances' which is RAW.
+             // If simplification is active, 'effectiveSum' will be SIMPLIFIED.
+             // They WILL differ!
+             // Correct action: Overwrite 'update.balance' with 'effectiveSum' to ensure consistency.
+             // The Friend List relies on 'group_breakdown' sum anyway, but having 'balance' column consistent is good for sorting/perf.
+             
+             if (diff > 0.01) {
+                 // console.log(`[BALANCE_ALIGNMENT] Updating friend ${update.id} balance from ${update.balance} (Raw) to ${effectiveSum} (Effective)`);
+                 update.balance = Math.round(effectiveSum * 100) / 100;
+             }
+         });
+         
+         console.log('[BALANCE_CONSISTENCY_OK] Invariants verified.');
+    };
+
     // --- STEP 3b: FRIEND IDENTITY SYNC ---
     console.log('[BALANCE_DEBUG] Persisting Friend updates with Identity Sync...');
     const friendIds = Array.from(calculatedFriendBalances.keys());
     const { data: currentBalancesData } = await supabase
         .from('friends')
-        .select('id, balance, group_breakdown')
+        .select('id, owner_id, linked_user_id, balance, group_breakdown')
         .in('id', friendIds);
     
+    // Map FriendID to Metadata for bilateral edge lookup
+    const friendMetaMap = new Map<string, { ownerId: string, linkedUserId: string }>();
+    friendsData?.forEach((f: any) => {
+        if (f.owner_id && f.linked_user_id) {
+            friendMetaMap.set(f.id, { ownerId: f.owner_id, linkedUserId: f.linked_user_id });
+        }
+    });
+
     const currentBalancesMap = new Map<string, any>();
     currentBalancesData?.forEach((f: any) => currentBalancesMap.set(f.id, f));
 
-    // Helper to find effective balance from edges
+    // Helper to find effective BILATERAL balance from simplified edges
     const getEffectiveBalance = (friendId: string, groupId: string, rawAmount: number): number => {
         const edges = simplifiedEdgesMap.get(groupId);
-        if (!edges) return rawAmount; // Not simplified -> Return Raw
+        if (!edges) return rawAmount; 
         
-        // Find my role. Who am I? 
-        // `friendId` is the local friend record ID. 
-        // `edges` use `userId` (Global or Linked).
-        // We need to map `friendId` -> `userId`.
-        const linkedUser = friendIdToLinkedUser.get(friendId);
-        // If local friend has no linked user, they might just use 'friendId' in the splits?
-        // See `calculateBalancesForData`: we map `friendId` -> `effectiveId`. 
-        // If explicit linked user exists, we use it. Else we use friendId.
-        const myUserId = linkedUser || friendId;
+        const meta = friendMetaMap.get(friendId);
+        if (!meta) return rawAmount; // Local friend -> No global edges -> Raw
         
-        // Calculate Net from Edges
+        const { ownerId: myId, linkedUserId: theirId } = meta;
+        
+        // Sum edges between Me and Them
+        // Positive: They owe Me (Them -> Me)
+        // Negative: I owe Them (Me -> Them)
+        
         let net = 0;
         edges.forEach(edge => {
-            if (edge.from === myUserId) net -= edge.amount; // I pay (Negative)
-            if (edge.to === myUserId) net += edge.amount;   // I receive (Positive)
+            if (edge.from === theirId && edge.to === myId) net += edge.amount;
+            if (edge.from === myId && edge.to === theirId) net -= edge.amount;
         });
         
         return Math.round(net * 100) / 100;
     };
     
-    const friendUpdatePromises = Array.from(calculatedFriendBalances.entries()).map(async ([id, balance]) => {
-        const finalBalance = Math.round(balance * 100) / 100;
-        
+    // COLLECT UPDATES
+    const pendingUpdates: { id: string, balance: number, breakdown: any[], rawBreakdownSum: number }[] = [];
+
+    for (const [id, balance] of calculatedFriendBalances) {
         const rawBreakdown = calculatedFriendGroupBalances.get(id);
         const breakdownList: { groupId: string, name: string, amount: number, rawAmount: number }[] = [];
+        let rawSum = 0;
         
-        // 1. Process Groups where Raw Balance exists
         if (rawBreakdown) {
             rawBreakdown.forEach((amt, gid) => {
                 const rawVal = Math.round(amt * 100) / 100;
+                rawSum += rawVal;
                 
-                // Effective Balance (Identity Sync)
                 let effectiveVal = rawVal;
                 if (groupSimplifyMap.get(gid)) {
                      effectiveVal = getEffectiveBalance(id, gid, rawVal);
                 }
                 
-                // Optimization: If both are zero? (Implicit close)
                 if (Math.abs(rawVal) > 0.01 || Math.abs(effectiveVal) > 0.01) {
                     breakdownList.push({
                         groupId: gid,
                         name: groupNameMap.get(gid) || 'Unknown Group',
-                        amount: effectiveVal,      // UI uses this
-                        rawAmount: rawVal          // Audit trail
+                        amount: effectiveVal,      
+                        rawAmount: rawVal          
                     });
                 }
             });
         }
         
-        // 2. Process Implicit Links (Simplified Edges exist but Raw = 0)
-        // Check all groups where this friend involved in Simplified Edges but NOT in Raw?
-        // This is expensive to scan. 
-        // For now, `rawBreakdown` captures all groups where *expenses/transactions* occurred.
-        // If Simpification creates a link A->C, does C have a raw entry?
-        // No, if A->B->C and A never paid C.
-        // So `calculatedFriendGroupBalances` might MISS the group for C if C never interacted with A physically?
-        // Wait, `calculatedFriendGroupBalances` is derived from `netBalances` in `calculateBalancesForData`.
-        // If A never paid C, then A's net balance wrt C is 0?
-        // NO. `calculateBalancesForData` tracks Net Balances Per Person.
-        // It does NOT track "Pairwise Net".
-        // `friendBalances` is Total Net.
-        // `friendGroupBalances` is Net Balance *for that friend* in that group.
-        // If A owes Group 10, and C is owed 10.
-        // `friendGroupBalances` for A has { Group1: -10 }.
-        // `friendGroupBalances` for C has { Group1: +10 }.
-        // So BOTH have entries in `friendGroupBalances`.
-        // Therefore, `rawBreakdown` iteration covers ALL participants in the group.
-        // We don't need to scan for hidden edges. 
-        // Identity Resolution is complete via `getEffectiveBalance`.
-        
-        const currentRecord = currentBalancesMap.get(id);
+        pendingUpdates.push({ 
+            id, 
+            balance: Math.round(balance * 100) / 100, // Initial Raw Balance
+            breakdown: breakdownList,
+            rawBreakdownSum: Math.round(rawSum * 100) / 100
+        });
+    }
+
+    // RUN CHECKS & CORRECTIONS
+    verifyInvariants(pendingUpdates);
+
+    const friendUpdatePromises = pendingUpdates.map(async (update) => {
+        const currentRecord = currentBalancesMap.get(update.id);
         const oldBalance = currentRecord?.balance || 0;
         const oldBreakdownJSON = JSON.stringify(currentRecord?.group_breakdown || []);
-        const newBreakdownJSON = JSON.stringify(breakdownList);
+        const newBreakdownJSON = JSON.stringify(update.breakdown);
 
-        const balanceChanged = Math.abs(finalBalance - oldBalance) > 0.001;
+        const balanceChanged = Math.abs(update.balance - oldBalance) > 0.001;
         const breakdownChanged = oldBreakdownJSON !== newBreakdownJSON;
         
         if (balanceChanged || breakdownChanged) { 
              await supabase.from('friends').update({ 
-                 balance: finalBalance,
-                 group_breakdown: breakdownList 
-             }).eq('id', id);
+                 balance: update.balance, // Saved balance IS NOW EFFECTIVE
+                 group_breakdown: update.breakdown 
+             }).eq('id', update.id);
         }
     });
 

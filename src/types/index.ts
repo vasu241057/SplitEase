@@ -13,6 +13,7 @@ export type Friend = User & {
     groupId: string
     name: string
     amount: number
+    rawAmount?: number // Step 3: Audit trail
   }[]
 }
 
@@ -33,6 +34,7 @@ export type Group = {
   simplifyDebtsEnabled?: boolean | null // Audit only for Step 1
   currentUserBalance?: number
   user_balances?: Record<string, number>
+  simplified_debts?: { from: string; to: string; amount: number }[] // Step 3: Backend artifact
 }
 
 export type SplitType = "equal" | "unequal" | "shares" | "percentage"

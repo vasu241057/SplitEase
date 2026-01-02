@@ -27,21 +27,29 @@ export function SettleUp() {
       totalGroups: groups.length
   })
 
-  // Filter groups where both I and the selected friend are members
-  const selectedGroup = groups.find(g => g.id === groupId);
-
   // Check if simplification is enabled for this group (DB Flag)
+  const selectedGroup = groups.find(g => g.id === groupId);
   const isSimplified = selectedGroup?.simplifyDebtsEnabled === true;
 
+  // Initialize amount from Context if not passed in state
   useEffect(() => {
-    if (selectedGroup) {
-      console.log('[SIMPLIFY STATE]', {
-        groupId: selectedGroup.id,
-        enabled: isSimplified,
-        screenName: 'SettleUp'
-      });
-    }
-  }, [selectedGroup?.id, isSimplified]);
+      if (!amount && friendId && selectedGroup) {
+          const friend = friends.find(f => f.id === friendId);
+          if (friend && friend.group_breakdown) {
+              const breakdown = friend.group_breakdown.find(b => b.groupId === groupId);
+              if (breakdown) {
+                  // Default to Effective Amount (Simplified) if enabled, else Raw
+                  const balance = breakdown.amount; 
+                  if (balance !== 0) {
+                      setAmount(Math.abs(balance).toFixed(2));
+                      setDirection(balance < 0 ? "paying" : "receiving");
+                  }
+              }
+          }
+      }
+  }, [friendId, groupId, selectedGroup, friends]); // Run once when dependencies settle
+
+
 
   // Derive available users to settle with
   // If Group is selected: Show Group Members (excluding me)
