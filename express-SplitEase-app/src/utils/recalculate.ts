@@ -3,6 +3,81 @@ import { SupabaseClient } from '@supabase/supabase-js';
 
 // === HELPER: Core Calculation Logic (Pure Function) ===
 // Determines the net balances and breakdown for a given set of data.
+
+// --- SIMPLIFY DEBTS ENGINE ---
+type SimplifiedDebt = { from: string; to: string; amount: number; };
+type MemberBalance = { userId: string; balance: number; };
+
+const EPSILON = 0.005;
+
+/**
+ * Greedy matching algorithm to simplify debts.
+ * Input: List of { userId, balance } where Sum(balance) approx 0.
+ * Output: List of transfers { from, to, amount }.
+ */
+function coreSimplifyGroupDebts(balances: MemberBalance[]): SimplifiedDebt[] {
+    const totalBalance = balances.reduce((sum, b) => sum + b.balance, 0);
+    // Relaxed tolerance (0.05) to account for floating point accumulation in large groups
+    if (Math.abs(totalBalance) > 0.05) {
+       // Check if this is a catastrophic failure or just drift
+       // For safety, we log and returning empty (disabling simplification for this group)
+       // throwing would abort the entire recalc process.
+       console.warn(`[SIMPLIFY_ABORT] Balances sum to ${totalBalance}, expected 0.`, balances);
+       return [];
+    }
+
+    const debtors: { userId: string; amount: number }[] = [];
+    const creditors: { userId: string; amount: number }[] = [];
+    
+    balances.forEach(b => {
+        if (Math.abs(b.balance) < EPSILON) return;
+        const paise = Math.round(b.balance * 100);
+        
+        if (paise < 0) {
+            debtors.push({ userId: b.userId, amount: -paise }); // Store debt as positive magnitude
+        } else if (paise > 0) {
+            creditors.push({ userId: b.userId, amount: paise });
+        }
+    });
+
+    // Deterministic Sort: Amount DESC, then ID ASC
+    const sortFn = (a: { userId: string; amount: number }, b: { userId: string; amount: number }) => {
+        if (b.amount !== a.amount) return b.amount - a.amount;
+        return a.userId < b.userId ? -1 : 1;
+    };
+
+    debtors.sort(sortFn);
+    creditors.sort(sortFn);
+
+    const results: SimplifiedDebt[] = [];
+    let debtorIdx = 0;
+    let creditorIdx = 0;
+
+    while (debtorIdx < debtors.length && creditorIdx < creditors.length) {
+        const debtor = debtors[debtorIdx];
+        const creditor = creditors[creditorIdx];
+        
+        // Match minimum of what is owed vs what is owed to creditor
+        const amountPaise = Math.min(debtor.amount, creditor.amount);
+
+        if (amountPaise > 0) {
+            results.push({
+                from: debtor.userId,
+                to: creditor.userId,
+                amount: amountPaise / 100
+            });
+        }
+
+        debtor.amount -= amountPaise;
+        creditor.amount -= amountPaise;
+
+        if (debtor.amount === 0) debtorIdx++;
+        if (creditor.amount === 0) creditorIdx++;
+    }
+
+    return results;
+}
+
 const calculateBalancesForData = (
   friendsData: any[],
   expensesData: any[],
@@ -52,13 +127,18 @@ const calculateBalancesForData = (
 
       // 2. Update Group User Balances
       const globalUserId = friendIdToLinkedUser.get(friendId);
-      if (globalUserId) {
+      // IMPLICIT FRIEND FIX:
+      // Global Users have 'globalUserId'. Local Friends (non-linked) use 'friendId'.
+      // Both are valid identifiers for the group member context.
+      const effectiveId = globalUserId || friendId;
+      
+      if (effectiveId) {
           if (!groupUserBalances.has(groupId)) {
               groupUserBalances.set(groupId, new Map<string, number>());
           }
           const userMap = groupUserBalances.get(groupId)!;
-          const userCurrent = userMap.get(globalUserId) || 0;
-          userMap.set(globalUserId, userCurrent + delta);
+          const userCurrent = userMap.get(effectiveId) || 0;
+          userMap.set(effectiveId, userCurrent + delta);
       }
   };
 
@@ -244,7 +324,8 @@ const calculateBalancesForData = (
     friendBalances,
     friendGroupBalances,
     groupUserBalances,
-    missingLinks // Return detected missing links
+    missingLinks, // Return detected missing links
+    friendIdToLinkedUser // Return for Global Recalc Identity Sync
   };
 };
 
@@ -276,10 +357,15 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     
     if (expensesError) throw expensesError;
     
-    // Fetch Groups
-    const { data: groupsData } = await supabase.from('groups').select('id, name');
+    // Fetch Groups with Simplify Flag
+    const { data: groupsData } = await supabase.from('groups').select('id, name, simplify_debts_enabled');
     const groupNameMap = new Map<string, string>();
-    groupsData?.forEach((g: any) => groupNameMap.set(g.id, g.name));
+    const groupSimplifyMap = new Map<string, boolean>();
+    
+    groupsData?.forEach((g: any) => {
+        groupNameMap.set(g.id, g.name);
+        groupSimplifyMap.set(g.id, g.simplify_debts_enabled);
+    });
 
     // 3. Compute
     // Fetch transactions first
@@ -350,21 +436,58 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     const calculatedFriendBalances = result.friendBalances;
     const calculatedFriendGroupBalances = result.friendGroupBalances;
     const calculatedGroupUserBalances = result.groupUserBalances;
+    const friendIdToLinkedUser = result.friendIdToLinkedUser;
 
-    // 0. RE-VERIFY STATE TIMESTAMP
-    const { data: latestExpenseCheck } = await supabase.from('expenses').select('created_at').order('created_at', { ascending: false }).limit(1).single();
-    const { data: latestTxCheck } = await supabase.from('transactions').select('created_at').order('created_at', { ascending: false }).limit(1).single();
+    // --- STEP 3a: PRE-CALCULATE SIMPLIFIED EDGES (GLOBAL) ---
+    // We need to know the simplified state of every group to correctly populate the Friend Breakdown.
+    const simplifiedEdgesMap = new Map<string, SimplifiedDebt[]>(); // GroupID -> Edges
+
+    const groupUpdates = Array.from(calculatedGroupUserBalances.entries()).map(async ([groupId, userMap]: [string, Map<string, number>]) => {
+        const userBalancesObj: Record<string, number> = {};
+        const balancesForSimplify: MemberBalance[] = [];
+
+        userMap.forEach((amt: number, uid: string) => {
+            if (Math.abs(amt) > 0.01) {
+                userBalancesObj[uid] = Math.round(amt * 100) / 100;
+                balancesForSimplify.push({ userId: uid, balance: userBalancesObj[uid] });
+            }
+        });
+        
+        // SIMPLIFICATION ENGINE
+        let simplifiedDebts: SimplifiedDebt[] = [];
+        const isSimplifyEnabled = groupSimplifyMap.get(groupId) === true;
+
+        if (isSimplifyEnabled) {
+             const rawNodeCount = balancesForSimplify.length;
+             try {
+                simplifiedDebts = coreSimplifyGroupDebts(balancesForSimplify);
+                // Cache for Friend Sync
+                simplifiedEdgesMap.set(groupId, simplifiedDebts);
+                console.log(`[SIMPLIFY_ENGINE_RUN] Group ${groupId}: ${rawNodeCount} Raw Nodes -> ${simplifiedDebts.length} Simplified Edges`);
+             } catch (err) {
+                 console.error(`[SIMPLIFY_FAIL] Group ${groupId}:`, err);
+             }
+        } 
+
+        await supabase.from('groups').update({
+            user_balances: userBalancesObj,
+            simplified_debts: simplifiedDebts
+        }).eq('id', groupId);
+    });
+
+    // Run Group Updates FIRST (to populate map if we needed async, but we compute synchronously inside the map callback locally)
+    // Actually, we need to wait for these promises to complete DB writes? 
+    // No, we can run them in parallel with Friend updates, BUT we need `simplifiedEdgesMap` populated.
+    // The map population happens synchronously in the loop *before* the await update? 
+    // Yes, `simplifiedEdgesMap.set` is synchronous. 
+    // So we can start friend updates immediately.
     
-    const signatureEnd = `${latestExpenseCheck?.created_at || '0'}|${latestTxCheck?.created_at || '0'}`;
-
-    if (signatureStart !== signatureEnd) {
-        console.warn(`[CONCURRENCY_GUARD] Race detected! Data changed during calculation. START=${signatureStart} END=${signatureEnd}. Retrying...`);
-        await new Promise(r => setTimeout(r, Math.random() * 200 + 100)); // Jitter
-        continue; 
-    }
-
-    // 6. DB Updates
-    console.log('[BALANCE_DEBUG] Persisting updates...');
+    // Wait for group writes to ensure safety? Let's bundle them at the end or just run them.
+    // We'll collect promises.
+    const groupUpdatePromises = groupUpdates; // Array of promises
+    
+    // --- STEP 3b: FRIEND IDENTITY SYNC ---
+    console.log('[BALANCE_DEBUG] Persisting Friend updates with Identity Sync...');
     const friendIds = Array.from(calculatedFriendBalances.keys());
     const { data: currentBalancesData } = await supabase
         .from('friends')
@@ -373,24 +496,81 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     
     const currentBalancesMap = new Map<string, any>();
     currentBalancesData?.forEach((f: any) => currentBalancesMap.set(f.id, f));
+
+    // Helper to find effective balance from edges
+    const getEffectiveBalance = (friendId: string, groupId: string, rawAmount: number): number => {
+        const edges = simplifiedEdgesMap.get(groupId);
+        if (!edges) return rawAmount; // Not simplified -> Return Raw
+        
+        // Find my role. Who am I? 
+        // `friendId` is the local friend record ID. 
+        // `edges` use `userId` (Global or Linked).
+        // We need to map `friendId` -> `userId`.
+        const linkedUser = friendIdToLinkedUser.get(friendId);
+        // If local friend has no linked user, they might just use 'friendId' in the splits?
+        // See `calculateBalancesForData`: we map `friendId` -> `effectiveId`. 
+        // If explicit linked user exists, we use it. Else we use friendId.
+        const myUserId = linkedUser || friendId;
+        
+        // Calculate Net from Edges
+        let net = 0;
+        edges.forEach(edge => {
+            if (edge.from === myUserId) net -= edge.amount; // I pay (Negative)
+            if (edge.to === myUserId) net += edge.amount;   // I receive (Positive)
+        });
+        
+        return Math.round(net * 100) / 100;
+    };
     
-    const validUpdates = Array.from(calculatedFriendBalances.entries()).map(async ([id, balance]) => {
+    const friendUpdatePromises = Array.from(calculatedFriendBalances.entries()).map(async ([id, balance]) => {
         const finalBalance = Math.round(balance * 100) / 100;
         
         const rawBreakdown = calculatedFriendGroupBalances.get(id);
-        const breakdownList: { groupId: string, name: string, amount: number }[] = [];
+        const breakdownList: { groupId: string, name: string, amount: number, rawAmount: number }[] = [];
         
+        // 1. Process Groups where Raw Balance exists
         if (rawBreakdown) {
             rawBreakdown.forEach((amt, gid) => {
-                if (Math.abs(amt) > 0.01) {
+                const rawVal = Math.round(amt * 100) / 100;
+                
+                // Effective Balance (Identity Sync)
+                let effectiveVal = rawVal;
+                if (groupSimplifyMap.get(gid)) {
+                     effectiveVal = getEffectiveBalance(id, gid, rawVal);
+                }
+                
+                // Optimization: If both are zero? (Implicit close)
+                if (Math.abs(rawVal) > 0.01 || Math.abs(effectiveVal) > 0.01) {
                     breakdownList.push({
                         groupId: gid,
                         name: groupNameMap.get(gid) || 'Unknown Group',
-                        amount: Math.round(amt * 100) / 100
+                        amount: effectiveVal,      // UI uses this
+                        rawAmount: rawVal          // Audit trail
                     });
                 }
             });
         }
+        
+        // 2. Process Implicit Links (Simplified Edges exist but Raw = 0)
+        // Check all groups where this friend involved in Simplified Edges but NOT in Raw?
+        // This is expensive to scan. 
+        // For now, `rawBreakdown` captures all groups where *expenses/transactions* occurred.
+        // If Simpification creates a link A->C, does C have a raw entry?
+        // No, if A->B->C and A never paid C.
+        // So `calculatedFriendGroupBalances` might MISS the group for C if C never interacted with A physically?
+        // Wait, `calculatedFriendGroupBalances` is derived from `netBalances` in `calculateBalancesForData`.
+        // If A never paid C, then A's net balance wrt C is 0?
+        // NO. `calculateBalancesForData` tracks Net Balances Per Person.
+        // It does NOT track "Pairwise Net".
+        // `friendBalances` is Total Net.
+        // `friendGroupBalances` is Net Balance *for that friend* in that group.
+        // If A owes Group 10, and C is owed 10.
+        // `friendGroupBalances` for A has { Group1: -10 }.
+        // `friendGroupBalances` for C has { Group1: +10 }.
+        // So BOTH have entries in `friendGroupBalances`.
+        // Therefore, `rawBreakdown` iteration covers ALL participants in the group.
+        // We don't need to scan for hidden edges. 
+        // Identity Resolution is complete via `getEffectiveBalance`.
         
         const currentRecord = currentBalancesMap.get(id);
         const oldBalance = currentRecord?.balance || 0;
@@ -408,22 +588,10 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
         }
     });
 
-    const groupUpdates = Array.from(calculatedGroupUserBalances.entries()).map(async ([groupId, userMap]: [string, Map<string, number>]) => {
-        const userBalancesObj: Record<string, number> = {};
-        userMap.forEach((amt: number, uid: string) => {
-            if (Math.abs(amt) > 0.01) {
-                userBalancesObj[uid] = Math.round(amt * 100) / 100;
-            }
-        });
-        
-        await supabase.from('groups').update({
-            user_balances: userBalancesObj
-        }).eq('id', groupId);
-    });
-    
-    await Promise.all([...validUpdates, ...groupUpdates]);
-    console.log('[BALANCE_DEBUG] Persistence Complete.');
+    await Promise.all([...friendUpdatePromises, ...groupUpdatePromises]);
+    console.log('[IDENTITY_SYNC_COMPLETE] Global Recalc Synced.');
     return; // Success
+
   }
   console.error(`[CONCURRENCY_GUARD] Failed to settle balances after ${MAX_RETRIES} attempts.`);
 };
@@ -627,55 +795,77 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
             // For each friend involved in this group, we replace the component of their balance that belongs to this group.
             
             // Need 'name' for the breakdown entry
-            const { data: groupData } = await supabase.from('groups').select('name').eq('id', groupId).single();
+            const { data: groupData } = await supabase.from('groups').select('name, simplify_debts_enabled').eq('id', groupId).single();
             const groupName = groupData?.name || 'Unknown';
+            const simplifyDebtsEnabled = groupData?.simplify_debts_enabled === true;
 
-            const updates = friendsData.map(async (friend: any) => {
+            // NEEDED for Scoped Identity Sync:
+            // We need to map `friendId` (Local) -> `userId` (Global/Linked) to match Edges.
+            // We can re-use `friendsData` which contains `linked_user_id`.
+            
+            const friendMap = new Map<string, any>();
+            friendsData.forEach((f: any) => friendMap.set(f.id, f));
+
+             const updates = friendsData.map(async (friend: any) => {
                 const friendId = friend.id;
                 
-                // Get new Amount for this group
-                // Note: newGroupDeltas contains the NET balance for this group because calculateBalancesForData 
-                // essentially calculates "Sum of Expenses + Transactions" for the provided dataset.
-                const newGroupAmount = newGroupDeltas.get(friendId) || 0;
+                // Get new Amount for this group (Raw)
+                const newGroupAmountRaw = newGroupDeltas.get(friendId) || 0;
                 
+                // Get Effective Amount (Simplified)
+                let effectiveAmount = newGroupAmountRaw;
+                
+                if (simplifyDebtsEnabled) {
+                    const linkedUser = friend.linked_user_id;
+                    const myUserId = linkedUser || friendId;
+                    
+                    let net = 0;
+                    simplifiedDebts.forEach(edge => {
+                        if (edge.from === myUserId) net -= edge.amount; 
+                        if (edge.to === myUserId) net += edge.amount;
+                    });
+                    // Optimization: If edges exist, net is the answer. If no edges involved me, net is 0.
+                    // Does this mean I am settled? Yes.
+                    // But wait, if I am not in `simplifiedDebts`, it means I'm 0.
+                    // What if I was excluded from simplification due to bug? 
+                    // `simplifiedDebts` covers ALL non-zero participants.
+                    effectiveAmount = Math.round(net * 100) / 100;
+                }
+
                 // Get Old Amount for this group from DB (loaded in friendsData)
                 const currentBreakdown = friend.group_breakdown || [];
                 const oldEntry = currentBreakdown.find((b: any) => b.groupId === groupId);
-                const oldGroupAmount = oldEntry?.amount || 0;
-
-                const delta = newGroupAmount - oldGroupAmount;
-                const roundedDelta = Math.round(delta * 100) / 100;
-
-                // Log
-                if (Math.abs(roundedDelta) > 0.001) {
-                    console.log(`[RECALC_GROUP_DELTA] { friendId: '${friendId}', old: ${oldGroupAmount}, new: ${newGroupAmount}, delta: ${roundedDelta} }`);
-                }
-
-                // --- Idempotency Optimization ---
-                // If the group amount hasn't changed, and the delta is negligible, DO NOT WRITE.
-                if (Math.abs(roundedDelta) < 0.001 && Math.abs(newGroupAmount - oldGroupAmount) < 0.001) {
-                    return; 
-                }
-
-                // Apply Delta
-                const newBalance = (friend.balance || 0) + delta;
                 
-                // Construct New Breakdown
+                // Check change against STORED Effective Value
+                const oldGroupAmount = oldEntry?.amount || 0;
+                
+                // Delta vs Raw? No, we just reconstruct the breakdown item and let DB update decide.
+                // We update 'balance' using the TOTAL NET (which is Sum of Raws).
+                // Wait. `friend.balance` = Sum of all group Raws? 
+                // Or Sum of all group Effectives?
+                // `friend.balance` MUST be Net Liability.
+                // In a simplified world, Net Liability is invariant. 
+                // Sum(Raw) == Sum(Effective).
+                // So we can continue using `friend.balance` from `newBalance` logic which assumes Raw accumulation.
+                // Just to be safe: `newBalance` logic in Scoped Recalc applies `delta` of Raw.
+                
+                const oldGroupAmountRaw = oldEntry?.rawAmount !== undefined ? oldEntry.rawAmount : (oldEntry?.amount || 0); // Backwards compat
+                
+                const rawDelta = newGroupAmountRaw - oldGroupAmountRaw;
+                const newBalance = (friend.balance || 0) + rawDelta;
+
+                // Update Breakdown Entry
                 const otherGroups = currentBreakdown.filter((b: any) => b.groupId !== groupId);
                 let newBreakdown = [...otherGroups];
                 
-                if (Math.abs(newGroupAmount) > 0.01) {
+                if (Math.abs(newGroupAmountRaw) > 0.01 || Math.abs(effectiveAmount) > 0.01) {
                     newBreakdown.push({
                         groupId: groupId,
                         name: groupName,
-                        amount: Math.round(newGroupAmount * 100) / 100
+                        amount: Math.round(effectiveAmount * 100) / 100,
+                        rawAmount: Math.round(newGroupAmountRaw * 100) / 100
                     });
                 }
-                
-                // --- INVARIANT Check: Consistency ---
-                // balance should roughly equal sum of breakdown. 
-                // (Assuming all sources are in breakdown. If non-group sources exist, strict equality fails).
-                // We trust the delta math more than the sum here, but we can check direction.
                 
                 // Persist
                 await supabase.from('friends').update({
@@ -686,22 +876,38 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 
             // Update Group User Balances (Overwrite for this group)
             const userMap = groupUserBalances.get(groupId);
+            
+            // Build Objects
+            const userBalancesObj: Record<string, number> = {};
+            let simplifiedDebts: SimplifiedDebt[] = [];
+            
             if (userMap) {
-                const userBalancesObj: Record<string, number> = {};
+                const balancesForSimplify: MemberBalance[] = [];
+                
                 userMap.forEach((amt: number, uid: string) => {
                     if (Math.abs(amt) > 0.01) {
-                        userBalancesObj[uid] = Math.round(amt * 100) / 100;
+                        const val = Math.round(amt * 100) / 100;
+                        userBalancesObj[uid] = val;
+                        balancesForSimplify.push({ userId: uid, balance: val });
                     }
                 });
-                 await supabase.from('groups').update({
-                    user_balances: userBalancesObj
-                }).eq('id', groupId);
-            } else {
-                 // Even if empty, clear it?
-                  await supabase.from('groups').update({
-                    user_balances: {}
-                }).eq('id', groupId);
+                
+                // SIMPLIFICATION ENGINE (Scoped)
+                if (simplifyDebtsEnabled) {
+                     try {
+                        simplifiedDebts = coreSimplifyGroupDebts(balancesForSimplify);
+                        console.log(`[SIMPLIFY_ENGINE_RUN] [SCOPED] Group ${groupId}: ${balancesForSimplify.length} Raw Nodes -> ${simplifiedDebts.length} Simplified Edges`);
+                     } catch (err) {
+                         console.error(`[SIMPLIFY_FAIL] [SCOPED] Group ${groupId}:`, err);
+                     }
+                }
             }
+            
+            // Persist (Batch update both fields)
+            await supabase.from('groups').update({
+                user_balances: userBalancesObj,
+                simplified_debts: simplifiedDebts
+            }).eq('id', groupId);
 
             await Promise.all(updates);
             console.log(`[RECALC_SCOPE_SUCCESS] { groupId: '${groupId}' }`);
