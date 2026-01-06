@@ -2,6 +2,7 @@ import express from 'express';
 import { createSupabaseClient } from '../supabase';
 import { getGroupTransactionsWithParties, applyTransactionsToNetBalances } from '../utils/transactionHelpers';
 import { calculatePairwiseExpenseDebt, BALANCE_TOLERANCE } from '../utils/balanceUtils';
+import { cleanupAfterMemberExit } from '../utils/memberCleanup';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -405,6 +406,12 @@ router.delete('/:id/members/:friendId', async (req, res) => {
         .eq('friend_id', friendId);
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // 6. Cleanup stale data (user_balances, simplified_debts, friend breakdowns)
+    if (linkedUserId) {
+        await cleanupAfterMemberExit(supabase, id, linkedUserId);
+    }
+
     res.status(204).send();
 });
 
@@ -527,6 +534,9 @@ router.post('/:id/leave', async (req, res) => {
         .eq('friend_id', memberFriendId); // Remove the friend link
 
     if (deleteError) return res.status(500).json({ error: deleteError.message });
+
+    // 4. Cleanup stale data (user_balances, simplified_debts, friend breakdowns)
+    await cleanupAfterMemberExit(supabase, id, userId);
 
     res.status(200).json({ message: "Successfully left group" });
 });

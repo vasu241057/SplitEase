@@ -82,8 +82,16 @@ const calculateBalancesForData = (
   friendsData: any[],
   expensesData: any[],
   transactionsData: any[],
-  targetGroupId: string | null = null // If set, only tracks breakdown for this group
+   targetGroupId: string | null = null // If set, only tracks breakdown for this group
 ) => {
+  // [BACKEND_AUDIT] Input Integrity Check
+  console.log('[BACKEND_AUDIT] calculateBalancesForData START', {
+      friendsCount: friendsData.length,
+      expensesCount: expensesData.length,
+      transactionsCount: transactionsData.length,
+      targetGroupId: targetGroupId || 'GLOBAL'
+  });
+
   // Map: FriendID -> Balance (Net for this scope)
   const friendBalances = new Map<string, number>();
   // Map: FriendID -> Map<GroupId, Balance>
@@ -248,6 +256,14 @@ const calculateBalancesForData = (
           const current = netBalances.get(payerId) || 0;
           netBalances.set(payerId, current + unpaidAmount);
       }
+      
+      // [BACKEND_AUDIT] Net Balances for Expense
+      if (Math.abs(unpaidAmount) > 0.01 || netBalances.size > 0) {
+           // Only log complex cases to avoid spam
+           if (expense.splits.length > 5 || Math.abs(expense.amount) > 1000) {
+               console.log(`[BACKEND_AUDIT] Ephemeral Net Balances for Expense ${expense.id}:`, Array.from(netBalances.entries()));
+           }
+      }
 
       // Simplify Debt
       const debtors: {id: string, amount: number}[] = [];
@@ -382,6 +398,27 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
     
     if (result.missingLinks.size > 0) {
         console.log(`[IMPLICIT_FRIEND_DETECTED] Found ${result.missingLinks.size} missing global-to-global links. Creating...`);
+        
+        // Step 1: Collect unique linkedUserIds for batch profile fetch
+        const uniqueLinkedUserIds = new Set<string>();
+        result.missingLinks.forEach(linkKey => {
+            const [_, linkedUserId] = linkKey.split(':');
+            if (linkedUserId && linkedUserId !== 'undefined') {
+                uniqueLinkedUserIds.add(linkedUserId);
+            }
+        });
+        
+        // Step 2: Batch fetch profiles for identity enrichment (single query)
+        const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, email, avatar_url')
+            .in('id', Array.from(uniqueLinkedUserIds));
+        
+        // Step 3: Build profileMap for O(1) lookup
+        const profileMap = new Map<string, { id: string; full_name: string | null; email: string | null; avatar_url: string | null }>(
+            (profiles || []).map(p => [p.id, p])
+        );
+        
         const newFriendsToCreate: any[] = [];
         
         result.missingLinks.forEach(linkKey => {
@@ -395,10 +432,18 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
                     reason: 'non-zero debt detected during recalculation'
                 });
                 
+                // Get identity from profile (fetched above) with fallbacks
+                const profile = profileMap.get(linkedUserId);
+                const friendName = profile?.full_name || 'Unknown User';
+                const friendEmail = profile?.email || null;
+                const friendAvatar = profile?.avatar_url || null;
+                
                 newFriendsToCreate.push({
                     owner_id: ownerId,
                     linked_user_id: linkedUserId,
-                    name: null, // As per prompt
+                    name: friendName, // Identity from profiles table
+                    email: friendEmail,
+                    avatar: friendAvatar,
                     balance: 0,
                     group_breakdown: [],
                     is_implicit: true
@@ -742,11 +787,32 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
     
             if (result.missingLinks.size > 0) {
                 console.log(`[IMPLICIT_FRIEND_DETECTED] Found ${result.missingLinks.size} missing global-to-global links in SCOPE ${groupId}. Creating...`);
+                
+                // Step 1: Collect unique linkedUserIds for batch profile fetch
+                const uniqueLinkedUserIds = new Set<string>();
+                result.missingLinks.forEach(linkKey => {
+                    const [_, linkedUserId] = linkKey.split(':');
+                    if (linkedUserId && linkedUserId !== 'undefined') {
+                        uniqueLinkedUserIds.add(linkedUserId);
+                    }
+                });
+                
+                // Step 2: Batch fetch profiles for identity enrichment (single query)
+                const { data: profiles } = await supabase
+                    .from('profiles')
+                    .select('id, full_name, email, avatar_url')
+                    .in('id', Array.from(uniqueLinkedUserIds));
+                
+                // Step 3: Build profileMap for O(1) lookup
+                const profileMap = new Map<string, { id: string; full_name: string | null; email: string | null; avatar_url: string | null }>(
+                    (profiles || []).map(p => [p.id, p])
+                );
+                
                 const newFriendsToCreate: any[] = [];
                 
                 result.missingLinks.forEach(linkKey => {
                     const [ownerId, linkedUserId] = linkKey.split(':');
-                    if (ownerId && linkedUserId) {
+                    if (ownerId && linkedUserId && ownerId !== 'undefined' && linkedUserId !== 'undefined') {
                          console.log('[IMPLICIT FRIEND CREATED]', {
                             owner_id: ownerId,
                             linked_user_id: linkedUserId,
@@ -754,10 +820,18 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
                             reason: 'non-zero debt detected during recalculation'
                         });
                         
+                        // Get identity from profile (fetched above) with fallbacks
+                        const profile = profileMap.get(linkedUserId);
+                        const friendName = profile?.full_name || 'Unknown User';
+                        const friendEmail = profile?.email || null;
+                        const friendAvatar = profile?.avatar_url || null;
+                        
                         newFriendsToCreate.push({
                             owner_id: ownerId,
                             linked_user_id: linkedUserId,
-                            name: null, 
+                            name: friendName, // Identity from profiles table
+                            email: friendEmail,
+                            avatar: friendAvatar,
                             balance: 0,
                             group_breakdown: [],
                             is_implicit: true
@@ -794,7 +868,14 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
             // --- INVARIANT ASSERTION Check: Zero Sum ---
             let netSum = 0;
             newGroupDeltas.forEach(val => netSum += val);
+            
+            console.log(`[BACKEND_AUDIT] Scoped Recalc Net Sum: ${netSum.toFixed(4)}`);
+            
             if (Math.abs(netSum) > 0.05) { // 5 cents tolerance for floating point accumulation
+                 console.error(`[BACKEND_AUDIT] [CRITICAL_INVARIANT_FAILURE] Zero-Sum Violated. Net Sum: ${netSum}`, {
+                     groupId,
+                     deltas: Array.from(newGroupDeltas.entries())
+                 });
                  throw new Error(`[RECALC_ASSERT_FAIL] Zero-Sum Invariant Violated. Net Sum: ${netSum}`);
             }
 

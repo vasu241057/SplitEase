@@ -1,6 +1,7 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
 import { recalculateBalances, recalculateGroupBalances } from '../utils/recalculate';
+import { validateExpenseParticipantsAreMembers } from '../utils/expenseValidation';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -369,6 +370,17 @@ router.put('/:id', async (req, res) => {
   }
   // === END validation ===
 
+  // === Validate participants are still group members ===
+  if (groupId) {
+    const validation = await validateExpenseParticipantsAreMembers(supabase, id, groupId);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: "Cannot edit expense: Some participants have left the group. Re-add them first or delete and recreate the expense.",
+        exitedParticipants: validation.exitedParticipants
+      });
+    }
+  }
+
   // Prepare Splits for RPC
   // Logic matches create: Resolve IDs (currentUser -> ID, friend mapping etc handled by caller mostly, 
   // but here we might need to resolve 'currentUser' string if passed?)
@@ -421,6 +433,17 @@ router.delete('/:id', async (req, res) => {
   const { data: expenseBefore } = await supabase.from('expenses').select('group_id').eq('id', id).single();
   const groupId = expenseBefore?.group_id;
 
+  // Validate participants are still group members
+  if (groupId) {
+    const validation = await validateExpenseParticipantsAreMembers(supabase, id, groupId);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: "Cannot delete expense: Some participants have left the group. Re-add them first.",
+        exitedParticipants: validation.exitedParticipants
+      });
+    }
+  }
+
   const { error } = await supabase
     .from('expenses')
     .update({ deleted: true })
@@ -453,6 +476,21 @@ router.post('/:id/restore', async (req, res) => {
   const { id } = req.params;
   const supabase = createSupabaseClient();
 
+  // Fetch expense BEFORE restore to get group_id and validate
+  const { data: expenseBefore } = await supabase.from('expenses').select('*').eq('id', id).single();
+  const groupId = expenseBefore?.group_id;
+
+  // Validate participants are still group members
+  if (groupId) {
+    const validation = await validateExpenseParticipantsAreMembers(supabase, id, groupId);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: "Cannot restore expense: Some participants have left the group. Re-add them first.",
+        exitedParticipants: validation.exitedParticipants
+      });
+    }
+  }
+
   const { error } = await supabase
     .from('expenses')
     .update({ deleted: false })
@@ -460,9 +498,8 @@ router.post('/:id/restore', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Fetch after restore to get group_id (or could have fetched before)
+  // Fetch updated data for response
   const { data } = await supabase.from('expenses').select('*').eq('id', id).single();
-  const groupId = data?.group_id;
 
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);

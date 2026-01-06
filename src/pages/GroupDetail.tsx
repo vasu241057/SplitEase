@@ -151,7 +151,10 @@ export function GroupDetail() {
 
        // DISPLAY LOGIC:
        // If Simplify Enabled AND NOT "Show Raw" -> Use Backend Simplified Edges
-       if (simplifyDebts && !showRawView) {
+       // FAILSAFE: If simplifiedDebts is empty but group is NOT settled, fallback to Raw View (to prevent showing "Unknown Discrepancy")
+       const shouldUseSimplified = simplifyDebts && !showRawView && (simplifiedDebts.length > 0 || isGroupSettled);
+
+       if (shouldUseSimplified) {
            return simplifiedDebts
                 .filter(d => d.from === meRef.id || d.to === meRef.id)
                 .map(debt => {
@@ -268,6 +271,49 @@ export function GroupDetail() {
     }
   }
 
+  // [DISCREPANCY_DEBUG] INSTRUMENTATION
+  if (group && !isGroupSettled && balancesRelativeToMe.length === 0) {
+     console.log('[DISCREPANCY_DEBUG] Checking Invariant...');
+     console.log('[DISCREPANCY_DEBUG] Trigger: Group NOT settled but Balances are EMPTY.');
+     console.log('[DISCREPANCY_DEBUG] Toggle State:', { simplifyDebts, showRawView });
+     
+     // Log Group Context
+     console.log('[DISCREPANCY_DEBUG] Group Context:', {
+         id: group.id,
+         name: group.name,
+         currentUserBalance: group.currentUserBalance,
+         simplifyDebtsEnabled: group.simplifyDebtsEnabled,
+         simplifiedDebts: group.simplified_debts
+     });
+
+     // Log Friend Breakdowns relevant to this group
+     const memberBreakdowns = group.members.map(m => {
+        const friend = friends.find(f => f.id === m.id);
+        const breakdown = friend?.group_breakdown?.find(b => b.groupId === group.id);
+        return {
+            memberId: m.id,
+            name: m.name,
+            breakdown: breakdown || 'MISSING'
+        };
+     });
+     console.log('[DISCREPANCY_DEBUG] Friend Breakdowns:', JSON.stringify(memberBreakdowns, null, 2));
+
+     // Audit Expenses
+     console.log('[DISCREPANCY_DEBUG] Auditing Group Expenses...');
+     groupExpenses.forEach(e => {
+         const sumSplits = e.splits.reduce((acc, s) => acc + (s.amount || 0), 0);
+         if (Math.abs(e.amount - sumSplits) > 0.01) {
+             console.log('[DISCREPANCY_DEBUG] FAILED EXPENSE FOUND:', {
+                 id: e.id,
+                 desc: e.description,
+                 amount: e.amount,
+                 sumSplits: sumSplits,
+                 delta: e.amount - sumSplits
+             });
+         }
+     });
+  }
+
   return (
     <div className="space-y-6 pb-20 relative min-h-screen"> 
       {/* Header */}
@@ -315,33 +361,33 @@ export function GroupDetail() {
         )}
 
         {/* Simplified View Banner - Explain & Revert & Toggle */}
-        {simplifyDebts && !simplificationError && (
-              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
-                  <div className="flex-1">
-                      <p className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
-                          {showRawView ? (
-                              <>
-                                <Info className="h-4 w-4" />
-                                Viewing Original Debts
-                              </>
-                          ) : (
-                              <>
-                                <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                                Simplified View (Group)
-                              </>
-                          )}
-                      </p>
-                      <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                         {showRawView ? (
-                             <p>You are seeing the raw pairwise debts before simplification.</p>
-                         ) : (
-                             <>
-                                <p>This view shows a simplified payment route.</p>
-                                <p>It does NOT change what anyone owes overall.</p>
-                             </>
-                         )}
-                      </div>
-                  </div>
+      {simplifyDebts && !simplificationError && (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
+                <div className="flex-1">
+                    <div className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
+                        {showRawView ? (
+                            <>
+                              <Info className="h-4 w-4" />
+                              Viewing Original Debts
+                            </>
+                        ) : (
+                            <>
+                              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                              Simplified View (Group)
+                            </>
+                        )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
+                       {showRawView ? (
+                           <p>You are seeing the raw pairwise debts before simplification.</p>
+                       ) : (
+                           <>
+                              <p>This view shows a simplified payment route.</p>
+                              <p>It does NOT change what anyone owes overall.</p>
+                           </>
+                       )}
+                    </div>
+                </div>
                   <div className="flex flex-col gap-1 items-end">
                       <div className="flex items-center gap-2">
                             <span className="text-[10px] text-muted-foreground uppercase font-semibold">
