@@ -3,6 +3,7 @@ import { createSupabaseClient } from '../supabase';
 import { getGroupTransactionsWithParties, applyTransactionsToNetBalances } from '../utils/transactionHelpers';
 import { calculatePairwiseExpenseDebt, BALANCE_TOLERANCE } from '../utils/balanceUtils';
 import { cleanupAfterMemberExit } from '../utils/memberCleanup';
+import { recalculateGroupBalances } from '../utils/recalculate';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -234,6 +235,17 @@ router.put('/:id', async (req, res) => {
     const currentUserId = (req as any).user?.id;
     const supabase = createSupabaseClient();
 
+    // Fetch current simplify_debts_enabled value to detect actual change
+    let previousSimplifyValue: boolean | null = null;
+    if (simplifyDebtsEnabled !== undefined) {
+        const { data: currentGroup } = await supabase
+            .from('groups')
+            .select('simplify_debts_enabled')
+            .eq('id', id)
+            .single();
+        previousSimplifyValue = currentGroup?.simplify_debts_enabled ?? null;
+    }
+
     // Prepare update object
     const updates: any = {};
     if (name !== undefined) updates.name = name;
@@ -252,6 +264,13 @@ router.put('/:id', async (req, res) => {
         .single();
     
     if (error) return res.status(500).json({ error: error.message });
+
+    // Trigger scoped recalculation ONLY if simplify toggle actually changed
+    const simplifyValueChanged = simplifyDebtsEnabled !== undefined && previousSimplifyValue !== simplifyDebtsEnabled;
+    if (simplifyValueChanged) {
+        console.log(`[Groups] Simplify toggle changed for group ${id}: ${previousSimplifyValue} → ${simplifyDebtsEnabled}. Triggering scoped recalc.`);
+        await recalculateGroupBalances(supabase, id);
+    }
 
     // Handle Notifications for Simplify Toggle
     if (simplifyDebtsEnabled !== undefined) {
