@@ -272,56 +272,6 @@ router.put('/:id', async (req, res) => {
         await recalculateGroupBalances(supabase, id);
     }
 
-    // Handle Notifications for Simplify Toggle
-    if (simplifyDebtsEnabled !== undefined) {
-        try {
-            // 1. Get Group Members (to notify)
-            const { data: members } = await supabase
-                .from('group_members')
-                .select('friends(linked_user_id)')
-                .eq('group_id', id);
-
-            // 2. Get Actor Name
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('full_name')
-                .eq('id', currentUserId)
-                .single();
-            
-            const actorName = profile?.full_name || 'Someone';
-            const actionText = simplifyDebtsEnabled ? 'enabled' : 'disabled';
-            const title = `Group Settings Updated ⚙️`;
-            const body = `Simplified debts ${actionText} by ${actorName}`;
-            const url = `/groups/${id}/settings`; // Direct to settings so they can see the toggle
-
-            // 3. Filter Recipients (Exclude current user)
-            const recipients = members
-                ?.map((m: any) => m.friends?.linked_user_id)
-                .filter((uid: string) => uid && uid !== currentUserId) || [];
-
-            if (recipients.length > 0) {
-                console.log(`[Groups] Notifying simplify toggle. Group: ${id}, Actor: ${actorName}, Action: ${actionText}`);
-                const { sendPushNotification } = await import('../utils/push');
-                
-                // Construct env object for utility
-                const envKey = process.env as any;
-                const env = {
-                    SUPABASE_URL: envKey.SUPABASE_URL,
-                    SUPABASE_SERVICE_ROLE_KEY: envKey.SUPABASE_SERVICE_ROLE_KEY,
-                    VAPID_PUBLIC_KEY: envKey.VAPID_PUBLIC_KEY,
-                    VAPID_PRIVATE_KEY: envKey.VAPID_PRIVATE_KEY,
-                    VAPID_SUBJECT: envKey.VAPID_SUBJECT
-                };
-                
-                await sendPushNotification(env, recipients, title, body, url);
-            }
-
-        } catch (notifyError) {
-            console.error('[Groups] Failed to send simplify notification:', notifyError);
-            // Non-blocking error
-        }
-    }
-
     res.json(updatedGroup);
 });
 

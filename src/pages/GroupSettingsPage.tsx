@@ -1,7 +1,7 @@
 /* eslint-disable */
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight } from "lucide-react"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight, Loader2 } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
 import { useGroupBalance } from "../hooks/useGroupBalance"
@@ -35,6 +35,7 @@ export function GroupSettingsPage() {
         onConfirm: () => void
     } | null>(null)
     const [errorModal, setErrorModal] = useState<string | null>(null)
+    const [isTogglingSimplify, setIsTogglingSimplify] = useState(false);
 
     useEffect(() => {
         if (group) {
@@ -53,6 +54,7 @@ export function GroupSettingsPage() {
     const handleToggleSimplify = async (enabled: boolean) => {
         if (!group) return;
         
+        setIsTogglingSimplify(true);
         // Optimistic update logging
         console.log('[SIMPLIFY SYNC]', {
             groupId: group.id,
@@ -76,6 +78,8 @@ export function GroupSettingsPage() {
         } catch (error: any) {
             console.error("Failed to toggle simplify debts:", error);
             setErrorModal("Failed to update group settings");
+        } finally {
+            setIsTogglingSimplify(false);
         }
     };
 
@@ -280,6 +284,7 @@ export function GroupSettingsPage() {
                                 <Label htmlFor="simplify-debts" className="text-base font-medium">Simplify group debts</Label>
                                 <div className="group relative flex items-center">
                                     <Info className="h-4 w-4 text-muted-foreground cursor-help ml-1" />
+                                    {isTogglingSimplify && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-2" />}
                                     <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover text-popover-foreground text-xs rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity w-48 pointer-events-none border">
                                         Reduces the number of payments needed. Your total balance stays the same.
                                     </div>
