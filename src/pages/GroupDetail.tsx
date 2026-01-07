@@ -26,24 +26,8 @@ export function GroupDetail() {
 
   const group = groups.find((g) => g.id === id)
 
-  const [isReverting, setIsReverting] = useState(false);
-
   // Simplify Debts Preference (Driven by DB now)
   const simplifyDebts = group?.simplifyDebtsEnabled === true;
-  const [showRawView, setShowRawView] = useState(false); // New Toggle for Step 3 View Control
-
-  const handleRevertToRaw = async () => {
-      if (!group) return;
-      setIsReverting(true);
-      try {
-          await api.put(`/api/groups/${group.id}`, { simplifyDebtsEnabled: false });
-          await refreshGroups();
-      } catch (err) {
-          console.error("Failed to revert simplify:", err);
-      } finally {
-          setIsReverting(false);
-      }
-  };
 
   const handleBack = () => {
     const fromFriendId = location.state?.fromFriendId
@@ -150,9 +134,9 @@ export function GroupDetail() {
        };
 
        // DISPLAY LOGIC:
-       // If Simplify Enabled AND NOT "Show Raw" -> Use Backend Simplified Edges
+       // If Simplify Enabled -> Use Backend Simplified Edges
        // FAILSAFE: If simplifiedDebts is empty but group is NOT settled, fallback to Raw View (to prevent showing "Unknown Discrepancy")
-       const shouldUseSimplified = simplifyDebts && !showRawView && (simplifiedDebts.length > 0 || isGroupSettled);
+       const shouldUseSimplified = simplifyDebts && (simplifiedDebts.length > 0 || isGroupSettled);
 
        if (shouldUseSimplified) {
            return simplifiedDebts
@@ -186,17 +170,8 @@ export function GroupDetail() {
                 if (friend && friend.group_breakdown) {
                     const breakdown = friend.group_breakdown.find(b => b.groupId === group.id);
                     if (breakdown) {
-                        // PRIMARY CHANGE: If user requests Raw View, we read rawAmount.
-                        // Otherwise (if Simplification OFF globally), amount IS rawAmount.
-                        // Wait, if `simplifyDebts` is OFF, then breakdown.amount IS Raw (from backend logic).
-                        // If `simplifyDebts` is ON, breakdown.amount IS Effective.
-                        // So if `showRawView` is TRUE, we must explicitly read `rawAmount`.
-                        
-                        if (showRawView && breakdown.rawAmount !== undefined) {
-                             balance = breakdown.rawAmount;
-                        } else {
-                             balance = breakdown.amount;
-                        }
+                        // In Raw Mode (Simplify OFF), 'amount' IS the raw amount.
+                        balance = breakdown.amount;
                     }
                 }
 
@@ -205,7 +180,7 @@ export function GroupDetail() {
 
            }).filter((m): m is NonNullable<typeof m> => m !== null && !m.isSettled);
        }
-  }, [group, friends, currentUser.id, simplifyDebts, simplifiedDebts, showRawView]);
+  }, [group, friends, currentUser.id, simplifyDebts, simplifiedDebts]);
 
 
   if (loading) {
@@ -275,7 +250,7 @@ export function GroupDetail() {
   if (group && !isGroupSettled && balancesRelativeToMe.length === 0) {
      console.log('[DISCREPANCY_DEBUG] Checking Invariant...');
      console.log('[DISCREPANCY_DEBUG] Trigger: Group NOT settled but Balances are EMPTY.');
-     console.log('[DISCREPANCY_DEBUG] Toggle State:', { simplifyDebts, showRawView });
+     console.log('[DISCREPANCY_DEBUG] Toggle State:', { simplifyDebts });
      
      // Log Group Context
      console.log('[DISCREPANCY_DEBUG] Group Context:', {
@@ -361,61 +336,7 @@ export function GroupDetail() {
         )}
 
         {/* Simplified View Banner - Explain & Revert & Toggle */}
-      {simplifyDebts && !simplificationError && (
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-2 flex items-start justify-between">
-                <div className="flex-1">
-                    <div className="text-sm text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2">
-                        {showRawView ? (
-                            <>
-                              <Info className="h-4 w-4" />
-                              Viewing Original Debts
-                            </>
-                        ) : (
-                            <>
-                              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                              Simplified View (Group)
-                            </>
-                        )}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                       {showRawView ? (
-                           <p>You are seeing the raw pairwise debts before simplification.</p>
-                       ) : (
-                           <>
-                              <p>This view shows a simplified payment route.</p>
-                              <p>It does NOT change what anyone owes overall.</p>
-                           </>
-                       )}
-                    </div>
-                </div>
-                  <div className="flex flex-col gap-1 items-end">
-                      <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-muted-foreground uppercase font-semibold">
-                                {showRawView ? "Raw" : "Simplified"}
-                            </span>
-                           <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-6 px-2 text-xs"
-                                onClick={() => setShowRawView(!showRawView)}
-                            >
-                                {showRawView ? "Simplified" : "Original"}
-                            </Button>
-                      </div>
-                       {!showRawView && (
-                           <Button 
-                                variant="ghost" 
-                                size="sm" 
-                                className="h-auto py-0.5 px-2 text-[10px] text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                                onClick={handleRevertToRaw}
-                                disabled={isReverting}
-                            >
-                                {isReverting ? "..." : "Revert"}
-                            </Button>
-                       )}
-                   </div>
-              </div>
-        )}
+
 
         {isGroupSettled ? (
              <div className="flex items-center justify-center  bg-muted/20 rounded-lg py-3">
