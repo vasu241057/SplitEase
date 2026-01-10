@@ -93,13 +93,13 @@ export function Groups() {
                       <>
                         <p className={cn(
                           "text-xs font-medium",
-                          balance < 0 ? "text-green-600" : "text-red-600"
+                          balance > 0 ? "text-green-600" : "text-red-600"
                         )}>
-                          {balance < 0 ? "you get back" : "you owe"}
+                          {balance > 0 ? "you get back" : "you owe"}
                         </p>
                         <p className={cn(
                           "font-bold",
-                          balance < 0 ? "text-green-600" : "text-red-600"
+                          balance > 0 ? "text-green-600" : "text-red-600"
                         )}>
                           ₹{Math.abs(balance).toFixed(2)}
                         </p>

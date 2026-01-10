@@ -29,6 +29,25 @@ export function matchesMember(id: string | undefined | null, member: GroupMember
 }
 
 /**
+ * Match a debt participant ID (from simplified_debts) to a group member.
+ * simplified_debts uses User IDs, but members may have Friend IDs.
+ * This handles both linked members (with userId) and non-linked (id only).
+ * 
+ * Note: Accepts member with userId as string | null | undefined for type compatibility.
+ */
+export function matchesDebtParticipant(debtId: string | undefined | null, member: { id: string; userId?: string | null }): boolean {
+  if (!debtId) return false;
+  
+  // Prefer userId match (for linked members)
+  if (member.userId && debtId === member.userId) return true;
+  
+  // Fallback to id match (for non-linked members where id IS the user ID)
+  if (debtId === member.id) return true;
+  
+  return false;
+}
+
+/**
  * Find a split that belongs to a specific member.
  * Handles splits with user_id OR friend_id.
  */

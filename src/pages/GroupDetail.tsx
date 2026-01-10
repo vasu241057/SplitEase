@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
-import { matchesMember, type GroupMember } from "../utils/groupBalanceUtils"
+import { matchesMember, matchesDebtParticipant, type GroupMember } from "../utils/groupBalanceUtils"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -123,15 +123,6 @@ export function GroupDetail() {
   // View-Specific Balances (Cards)
   const balancesRelativeToMe = useMemo(() => {
        if (!group) return [];
-       
-       const myMemberRecord = group.members.find(
-           (m: any) => m.id === currentUser.id || m.userId === currentUser.id
-       );
-       
-       const meRef: GroupMember = { 
-           id: myMemberRecord?.id || currentUser.id, 
-           userId: currentUser.id 
-       };
 
        // DISPLAY LOGIC:
        // If Simplify Enabled -> Use Backend Simplified Edges
@@ -139,17 +130,17 @@ export function GroupDetail() {
        const shouldUseSimplified = simplifyDebts && (simplifiedDebts.length > 0 || isGroupSettled);
 
        if (shouldUseSimplified) {
+           // FIX: Use currentUser.id (actual user ID) instead of meRef.id (member/friend ID)
+           // simplified_debts uses actual user IDs, not member IDs
            return simplifiedDebts
-                .filter(d => d.from === meRef.id || d.to === meRef.id)
+                .filter(d => d.from === currentUser.id || d.to === currentUser.id)
                 .map(debt => {
-                    const isOwe = debt.from === meRef.id;
+                    const isOwe = debt.from === currentUser.id;
                     const otherId = isOwe ? debt.to : debt.from;
-                    const member = group.members.find(m => m.id === otherId); // Map userId -> Member
-                    // Note: simplified_debts uses global UserIds usually? 
-                    // `recalculate.ts` uses `effectiveId`. 
-                    // If member has `userId` set, we match against it. Matches member.userId OR member.id.
+                    // FIX: Match member by userId (actual user ID), not by member.id
+                    const member = group.members.find(m => m.userId === otherId || m.id === otherId);
                     
-                    if (!member) return null; // Should not happen if data integrity holds
+                    if (!member) return null;
 
                     return {
                         member,
@@ -656,30 +647,20 @@ export function GroupDetail() {
                 {group.members.map(member => {
                     if (member.id === currentUser.id || member.userId === currentUser.id) return null;
                     
-                    // FIX: Use proper member matching like Group Wall
-                    // Find current user's member record in the group to get their friend_id
-                    const myMemberRecord = group.members.find(
-                        (m: any) => m.id === currentUser.id || m.userId === currentUser.id
-                    );
-                    
                     let balance = 0;
-
-                     const meRef: GroupMember = {
-                        id: myMemberRecord?.id || currentUser.id,
-                        userId: currentUser.id
-                     };
                      
                      
                      // SIMPLIFIED MODE HANDLING IN SETTLE UP
                      if (simplifyDebts && !simplificationError) {
-                         // Find simplified edge
+                         // Find simplified edge using User IDs (simplified_debts uses User IDs)
+                         // FIX: Use matchesDebtParticipant for proper User ID matching
                          // 1. Me -> Them (I owe)
-                         const iOweThem = simplifiedDebts.find(d => d.from === meRef.id && d.to === member.id);
+                         const iOweThem = simplifiedDebts.find(d => d.from === currentUser.id && matchesDebtParticipant(d.to, member));
                          if (iOweThem) {
                              balance = -iOweThem.amount;
                          } else {
                              // 2. Them -> Me (They owe)
-                             const theyOweMe = simplifiedDebts.find(d => d.from === member.id && d.to === meRef.id);
+                             const theyOweMe = simplifiedDebts.find(d => matchesDebtParticipant(d.from, member) && d.to === currentUser.id);
                              if (theyOweMe) {
                                  balance = theyOweMe.amount;
                              } else {
