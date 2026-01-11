@@ -1,6 +1,6 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { recalculateBalances, recalculateGroupBalances } from '../utils/recalculate';
+import { recalculateGroupBalances, recalculatePersonalExpense } from '../utils/recalculate';
 import { validateExpenseParticipantsAreMembers } from '../utils/expenseValidation';
 
 import { authMiddleware } from '../middleware/auth';
@@ -8,15 +8,56 @@ import { authMiddleware } from '../middleware/auth';
 const router = express.Router();
 router.use(authMiddleware);
 
-// Helper to check if ID is a Profile ID (User ID)
-const isProfileId = async (supabase: any, id: string) => {
-  if (!id || id === 'currentUser') return false;
-  // Simple check: Try to select from profiles. 
-  // Optimization: Cache this or assume UUID format distinction? 
-  // But Friend IDs are also UUIDs.
-  // We must check DB.
-  const { data } = await supabase.from('profiles').select('id').eq('id', id).single();
-  return !!data;
+// === STEP 2 INVARIANT: UserID-Only Expense Creation ===
+// For all NEW expenses (create/update):
+// - expense_splits.user_id is REQUIRED (must be a valid global profiles.id)
+// - expense_splits.friend_id MUST always be NULL
+// - expenses.payer_user_id is REQUIRED
+// - expenses.payer_id MUST always be NULL
+// After Step 5 backfill, ALL data has user_id populated. No fallbacks.
+
+// Helper to validate all splits have valid user_id (Step 2 invariant)
+const validateUserIdOnlySplits = (splits: any[]): { valid: boolean; error?: string } => {
+  for (const split of splits) {
+    if (!split.user_id) {
+      return { 
+        valid: false, 
+        error: 'Invalid expense payload: all participants must have a valid global user ID (user_id is required)'
+      };
+    }
+    if (split.friend_id !== null && split.friend_id !== undefined) {
+      return { 
+        valid: false, 
+        error: 'Invalid expense payload: friend_id is not allowed for new expenses (must use user_id only)'
+      };
+    }
+  }
+  return { valid: true };
+};
+
+// Helper to extract 2 participants from personal expense splits for scoped recalculation
+const getPersonalExpenseParticipants = (splits: any[], payerId: string): [string, string] | null => {
+  const participants = new Set<string>();
+  
+  // Add payer
+  if (payerId && payerId !== 'currentUser') {
+    participants.add(payerId);
+  }
+  
+  // Add split participants
+  splits?.forEach((split: any) => {
+    const userId = split.user_id || split.userId;
+    if (userId && userId !== 'currentUser') {
+      participants.add(userId);
+    }
+  });
+  
+  // Return exactly 2 participants for scoped recalculation
+  const participantArray = Array.from(participants);
+  if (participantArray.length === 2) {
+    return [participantArray[0], participantArray[1]];
+  }
+  return null; // Not exactly 2 participants
 };
 
 router.get('/', async (req, res) => {
@@ -34,12 +75,13 @@ router.get('/', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
   
+  // INVARIANT: All expenses have payer_user_id and all splits have user_id (enforced after Step 5 backfill)
   const formatted = data.map((e: any) => ({
     ...e,
-    payerId: e.payer_user_id || e.payer_id || userId,
+    payerId: e.payer_user_id, // Strict: no fallback
     groupId: e.group_id,
     splits: e.splits.map((s: any) => ({
-      userId: s.user_id || s.friend_id || userId,
+      userId: s.user_id, // Strict: no fallback
       amount: s.amount,
       paidAmount: s.paid_amount,
       paid: s.paid
@@ -52,7 +94,6 @@ router.get('/', async (req, res) => {
 // GET Single Expense
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
-  const userId = (req as any).user.id;
   const supabase = createSupabaseClient();
 
   // Fetch expense with splits
@@ -66,13 +107,13 @@ router.get('/:id', async (req, res) => {
     return res.status(404).json({ error: 'Expense not found' });
   }
 
-  // Format
+  // INVARIANT: All expenses have payer_user_id and all splits have user_id
   const formatted = {
     ...e,
-    payerId: e.payer_user_id || e.payer_id || userId, // Fallback might be wrong if viewer is not payer, but consistency with list
+    payerId: e.payer_user_id, // Strict: no fallback
     groupId: e.group_id,
     splits: e.splits.map((s: any) => ({
-      userId: s.user_id || s.friend_id || userId, // logic matches list
+      userId: s.user_id, // Strict: no fallback
       amount: s.amount,
       paidAmount: s.paid_amount,
       paid: s.paid
@@ -266,21 +307,43 @@ router.post('/', async (req, res) => {
   console.log('[BALANCE_DEBUG] Splits to be created:', JSON.stringify(splits, null, 2));
   
   // === ATOMIC RPC CALL ===
-  // 1. Prepare Splits (Async Logic for ID resolution)
-  const preparedSplits = await Promise.all(splits.map(async (s: any) => ({
-    user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
-    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
-    amount: s.amount,
-    paid_amount: s.paidAmount || 0,
-    paid: s.paid || false
-  })));
+  // 1. Prepare Splits - STRICT userId-only enforcement (Step 2 Invariant)
+  // Frontend MUST send valid global userIds. No friend_id fallback.
+  const preparedSplits = splits.map((s: any) => {
+    // Resolve 'currentUser' to actual user ID
+    const resolvedUserId = s.userId === 'currentUser' ? (req as any).user.id : s.userId;
+    
+    return {
+      user_id: resolvedUserId,
+      friend_id: null, // Step 2 Invariant: NEVER persist friend_id for new expenses
+      amount: s.amount,
+      paid_amount: s.paidAmount || 0,
+      paid: s.paid || false
+    };
+  });
+
+  // STEP 2 INVARIANT: Validate all splits have user_id and no friend_id
+  const splitValidation = validateUserIdOnlySplits(preparedSplits);
+  if (!splitValidation.valid) {
+    console.error('[STEP2_INVARIANT_VIOLATION]', splitValidation.error);
+    return res.status(400).json({ error: splitValidation.error });
+  }
+
+  // Resolve payer ID - Step 2 Invariant: payer MUST have user_id
+  const resolvedPayerUserId = payerId === 'currentUser' ? (req as any).user.id : payerId;
+  if (!resolvedPayerUserId) {
+    console.error('[STEP2_INVARIANT_VIOLATION] Payer user_id is required');
+    return res.status(400).json({ 
+      error: 'Invalid expense payload: payer must have a valid global user ID (payer_user_id is required)' 
+    });
+  }
 
   const rpcParams = {
     p_description: description,
     p_amount: amount,
     p_date: date || new Date().toISOString(),
-    p_payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
-    p_payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
+    p_payer_id: null, // Step 2 Invariant: NEVER persist friend_id for payer
+    p_payer_user_id: resolvedPayerUserId,
     p_group_id: groupId || null,
     p_created_by: creatorUserId,
     p_splits: preparedSplits
@@ -303,11 +366,20 @@ router.post('/', async (req, res) => {
     if (groupId) {
         await recalculateGroupBalances(supabase, groupId);
     } else {
-        await recalculateBalances(supabase);
+        // Personal expense: MUST have exactly 2 participants
+        const participants = getPersonalExpenseParticipants(preparedSplits, rpcParams.p_payer_user_id || creatorUserId);
+        if (!participants) {
+            // N≠2 personal expenses are NOT supported - fail fast
+            throw new Error('Personal expenses currently support exactly 2 participants');
+        }
+        // No global fallback - scoped recalc only
+        await recalculatePersonalExpense(supabase, participants[0], participants[1]);
     }
     console.log('[BALANCE_DEBUG] RecalculateBalances completed successfully');
   } catch (e: any) {
-     console.error('[BALANCE_DEBUG] Error in recalculateBalances:', e); 
+     console.error('[BALANCE_DEBUG] Error in recalculation:', e);
+     // Surface error to client - do NOT swallow
+     return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
   }
   
   console.log('[BALANCE_DEBUG] ===== EXPENSE CREATION END =====');
@@ -381,27 +453,44 @@ router.put('/:id', async (req, res) => {
     }
   }
 
-  // Prepare Splits for RPC
-  // Logic matches create: Resolve IDs (currentUser -> ID, friend mapping etc handled by caller mostly, 
-  // but here we might need to resolve 'currentUser' string if passed?)
-  // The frontend usually passes resolved logic but let's be safe and replicate the resolution.
-  
-  // NOTE: isProfileId is async, need Promise.all
-  const preparedSplits = await Promise.all(splits.map(async (s: any) => ({
-    user_id: s.userId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, s.userId) ? s.userId : null),
-    friend_id: s.userId === 'currentUser' ? null : (await isProfileId(supabase, s.userId) ? null : s.userId),
-    amount: s.amount,
-    paid_amount: s.paidAmount || 0,
-    paid: s.paid || false
-  })));
+  // Prepare Splits for RPC - STRICT userId-only enforcement
+  // Frontend MUST send valid global userIds. No more friend_id fallback.
+  const preparedSplits = splits.map((s: any) => {
+    // Resolve 'currentUser' to actual user ID
+    const resolvedUserId = s.userId === 'currentUser' ? (req as any).user.id : s.userId;
+    
+    return {
+      user_id: resolvedUserId,
+      friend_id: null, // Step 2 Invariant: NEVER persist friend_id for new/updated expenses
+      amount: s.amount,
+      paid_amount: s.paidAmount || 0,
+      paid: s.paid || false
+    };
+  });
+
+  // STEP 2 INVARIANT: Validate all splits have user_id and no friend_id
+  const splitValidation = validateUserIdOnlySplits(preparedSplits);
+  if (!splitValidation.valid) {
+    console.error('[STEP2_INVARIANT_VIOLATION]', splitValidation.error);
+    return res.status(400).json({ error: splitValidation.error });
+  }
+
+  // Resolve payer ID - Step 2 Invariant: payer MUST have user_id
+  const resolvedPayerUserId = payerId === 'currentUser' ? (req as any).user.id : payerId;
+  if (!resolvedPayerUserId) {
+    console.error('[STEP2_INVARIANT_VIOLATION] Payer user_id is required');
+    return res.status(400).json({ 
+      error: 'Invalid expense payload: payer must have a valid global user ID (payer_user_id is required)' 
+    });
+  }
 
   const rpcParams = {
     p_expense_id: id,
     p_description: description,
     p_amount: amount,
     p_date: date,
-    p_payer_id: payerId === 'currentUser' ? null : (await isProfileId(supabase, payerId) ? null : payerId),
-    p_payer_user_id: payerId === 'currentUser' ? (req as any).user.id : (await isProfileId(supabase, payerId) ? payerId : null),
+    p_payer_id: null, // Step 2 Invariant: NEVER persist friend_id for payer
+    p_payer_user_id: resolvedPayerUserId,
     p_group_id: groupId,
     p_split_mode: splitMode || null, // Allow null for backward compat
     p_splits: preparedSplits
@@ -416,7 +505,17 @@ router.put('/:id', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Personal expense: MUST have exactly 2 participants
+    const participants = getPersonalExpenseParticipants(preparedSplits, rpcParams.p_payer_user_id || (req as any).user.id);
+    if (!participants) {
+      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
 
   // Notify
@@ -430,7 +529,7 @@ router.delete('/:id', async (req, res) => {
   const supabase = createSupabaseClient();
 
   // Fetch expense info before update to know the Group ID for scoped recalc
-  const { data: expenseBefore } = await supabase.from('expenses').select('group_id').eq('id', id).single();
+  const { data: expenseBefore } = await supabase.from('expenses').select('group_id, payer_user_id, payer_id').eq('id', id).single();
   const groupId = expenseBefore?.group_id;
 
   // Validate participants are still group members
@@ -454,7 +553,25 @@ router.delete('/:id', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Fetch expense splits to get participants for scoped recalculation
+    // INVARIANT: All splits have user_id after Step 5 backfill
+    const { data: expenseSplits } = await supabase
+      .from('expense_splits')
+      .select('user_id')
+      .eq('expense_id', id);
+    const participants = getPersonalExpenseParticipants(
+      expenseSplits || [],
+      expenseBefore?.payer_user_id ?? (() => { throw new Error('[INVARIANT] payer_user_id missing'); })()
+    );
+    if (!participants) {
+      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
 
   // System Comment
@@ -504,7 +621,25 @@ router.post('/:id/restore', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Fetch expense splits to get participants for scoped recalculation
+    // INVARIANT: All splits have user_id after Step 5 backfill
+    const { data: expenseSplits } = await supabase
+      .from('expense_splits')
+      .select('user_id')
+      .eq('expense_id', id);
+    const participants = getPersonalExpenseParticipants(
+      expenseSplits || [],
+      expenseBefore?.payer_user_id ?? (() => { throw new Error('[INVARIANT] payer_user_id missing'); })()
+    );
+    if (!participants) {
+      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
 
   // System Comment

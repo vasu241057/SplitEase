@@ -109,8 +109,6 @@ const calculateBalancesForData = (
 
 	// Map: `${ownerId}:${linkedUserId}` -> FriendID (For Global-Global lookup)
 	const globalFriendLookup = new Map<string, string>();
-	// Map: FriendID -> LinkedUserId (For translating local friend to global user)
-	const friendIdToLinkedUser = new Map<string, string>();
 	// Map: FriendID -> OwnerId (For getting owner of friend record)
 	const friendIdToOwner = new Map<string, string>();
 
@@ -123,7 +121,6 @@ const calculateBalancesForData = (
 		friendGroupBalances.set(f.id, new Map<string, number>());
 		if (f.owner_id && f.linked_user_id) {
 			globalFriendLookup.set(`${f.owner_id}:${f.linked_user_id}`, f.id);
-			friendIdToLinkedUser.set(f.id, f.linked_user_id);
 			friendIdToOwner.set(f.id, f.owner_id);
 		}
 	});
@@ -244,39 +241,25 @@ const calculateBalancesForData = (
 		const netBalances = new Map<string, number>();
 		const groupId = expense.group_id;
 
-		const payerId = expense.payer_user_id || expense.payer_id;
-		if (!payerId) return;
+		// INVARIANT: All expenses have payer_user_id after Step 5 backfill
+		const payerId = expense.payer_user_id;
+		if (!payerId) {
+			throw new Error(`[RECALC_INVARIANT_VIOLATION] payer_user_id is required. Expense: ${expense.id}`);
+		}
 
 		expense.splits.forEach((split: any) => {
-			let personId: string | undefined;
-
-			// === INVARIANT ENFORCEMENT: Groups require Global Users ===
-			// Group expenses MUST have split.user_id for all participants.
-			// Personal (non-group) expenses can fall back to friend_id.
-			if (expense.group_id) {
-				// GROUP EXPENSE: Global user ID is MANDATORY
-				if (!split.user_id) {
-					throw new Error(
-						`[GROUP_INVARIANT_VIOLATION] Missing user_id in group expense split. ` +
-							`Expense: ${expense.id}, Group: ${expense.group_id}, Split: ${JSON.stringify(split)}`
-					);
-				}
-				personId = split.user_id;
-			} else {
-				// PERSONAL EXPENSE: Preserve existing fallback logic for local friends
-				personId = split.user_id;
-
-				if (!personId && split.friend_id) {
-					const linkedUserId = friendIdToLinkedUser.get(split.friend_id);
-					if (linkedUserId) {
-						personId = linkedUserId;
-					} else {
-						personId = split.friend_id;
-					}
-				}
+			// === INVARIANT: All splits must have user_id (enforced at write-time) ===
+			// After Step 2, all new expenses store user_id in splits.
+			// After Step 5 backfill, legacy data will also have user_id.
+			// No fallback to friend_id — if missing, throw immediately.
+			
+			if (!split.user_id) {
+				throw new Error(
+					`[RECALC_INVARIANT_VIOLATION] split.user_id is required. ` +
+					`Expense: ${expense.id}, Group: ${expense.group_id || 'personal'}, Split: ${JSON.stringify(split)}`
+				);
 			}
-
-			if (!personId) return;
+			const personId = split.user_id;
 
 			const cost = split.amount;
 			const paid = split.paid_amount || (split.paid ? split.amount : 0);
@@ -377,7 +360,6 @@ const calculateBalancesForData = (
 		friendGroupBalances,
 		groupUserBalances,
 		missingLinks, // Return detected missing links
-		friendIdToLinkedUser, // Return for Global Recalc Identity Sync
 	};
 };
 
@@ -438,98 +420,29 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
 			.eq('deleted', false);
 		if (txError) throw txError;
 
-		// --- IMPLICIT FRIEND CREATION LOOP ---
-		// Run calculation once to detect missing links
-		let result = calculateBalancesForData(friendsData || [], expensesData, transactionsData);
+		// --- INVARIANT: No Implicit Friend Creation in Recalculation ---
+		// Friend relationships MUST be created during group lifecycle events (Step 3).
+		// If missing links are detected here, it indicates a data integrity issue.
+		//
+		// NOTE:
+		// Legacy groups created before Step 3 may lack complete friend relationships.
+		// This is expected until Step 5 backfill is executed.
+		// Missing friend relationships now cause hard failures by design.
+		// ---
+		const result = calculateBalancesForData(friendsData || [], expensesData, transactionsData);
 
 		if (result.missingLinks.size > 0) {
-			console.log(`[IMPLICIT_FRIEND_DETECTED] Found ${result.missingLinks.size} missing global-to-global links. Creating...`);
-
-			// Step 1: Collect unique linkedUserIds for batch profile fetch
-			const uniqueLinkedUserIds = new Set<string>();
-			result.missingLinks.forEach((linkKey) => {
-				const [_, linkedUserId] = linkKey.split(':');
-				if (linkedUserId && linkedUserId !== 'undefined') {
-					uniqueLinkedUserIds.add(linkedUserId);
-				}
-			});
-
-			// Step 2: Batch fetch profiles for identity enrichment (single query)
-			const { data: profiles } = await supabase
-				.from('profiles')
-				.select('id, full_name, email, avatar_url')
-				.in('id', Array.from(uniqueLinkedUserIds));
-
-			// Step 3: Build profileMap for O(1) lookup
-			const profileMap = new Map<string, { id: string; full_name: string | null; email: string | null; avatar_url: string | null }>(
-				(profiles || []).map((p) => [p.id, p])
+			throw new Error(
+				`[RECALC_INVARIANT_VIOLATION] Missing friend relationships detected: ` +
+				`${Array.from(result.missingLinks).join(', ')}. ` +
+				`Friend records must be created during group lifecycle events, not recalculation.`
 			);
-
-			const newFriendsToCreate: any[] = [];
-
-			result.missingLinks.forEach((linkKey) => {
-				const [ownerId, linkedUserId] = linkKey.split(':');
-				if (ownerId && linkedUserId && ownerId !== 'undefined' && linkedUserId !== 'undefined') {
-					// Guard logging
-					console.log('[IMPLICIT FRIEND CREATED]', {
-						owner_id: ownerId,
-						linked_user_id: linkedUserId,
-						group_id: 'recalc-global',
-						reason: 'non-zero debt detected during recalculation',
-					});
-
-					// Get identity from profile (fetched above) with fallbacks
-					const profile = profileMap.get(linkedUserId);
-					const friendName = profile?.full_name || 'Unknown User';
-					const friendEmail = profile?.email || null;
-					const friendAvatar = profile?.avatar_url || null;
-
-					newFriendsToCreate.push({
-						owner_id: ownerId,
-						linked_user_id: linkedUserId,
-						name: friendName, // Identity from profiles table
-						email: friendEmail,
-						avatar: friendAvatar,
-						balance: 0,
-						group_breakdown: [],
-						is_implicit: true,
-					});
-				}
-			});
-
-			if (newFriendsToCreate.length > 0) {
-				// Upsert to Friends table (Collision safety via upsert?)
-				// Assuming composite constraint exists or relying on 'insert' default
-				// Prompt says "Use upsert with (owner_id, linked_user_id) uniqueness"
-				// Supabase 'friends' table might not have unique constraint on owner_id+linked_user_id historically?
-				// Let's assume standard unique index exists or we rely on 'onConflict'.
-				const { error: createError } = await supabase
-					.from('friends')
-					.upsert(newFriendsToCreate, { onConflict: 'owner_id, linked_user_id', ignoreDuplicates: true });
-
-				if (createError) {
-					console.error('Failed to create implicit friends', createError);
-					throw createError;
-				}
-
-				// RE-FETCH Friends to get the new IDs
-				const { data: refreshedFriends, error: refreshError } = await supabase
-					.from('friends')
-					.select('id, owner_id, linked_user_id, group_breakdown');
-
-				if (refreshError) throw refreshError;
-				friendsData = refreshedFriends; // Update reference for computation
-
-				// Re-run Calculation with new data
-				result = calculateBalancesForData(friendsData || [], expensesData, transactionsData);
-			}
 		}
-		// -------------------------------------
+		// ---
 
 		const calculatedFriendBalances = result.friendBalances;
 		const calculatedFriendGroupBalances = result.friendGroupBalances;
 		const calculatedGroupUserBalances = result.groupUserBalances;
-		const friendIdToLinkedUser = result.friendIdToLinkedUser;
 
 		// --- STEP 3a: PRE-CALCULATE SIMPLIFIED EDGES (GLOBAL) ---
 		// We need to know the simplified state of every group to correctly populate the Friend Breakdown.
@@ -737,12 +650,12 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
 	console.error(`[CONCURRENCY_GUARD] Failed to settle balances after ${MAX_RETRIES} attempts.`);
 };
 
-// === NEW: Scoped Recalculation ===
+// === Scoped Recalculation ===
 export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId: string) => {
-	// 0. Rollback Safety & Initial Guard
-	if (process.env.USE_SCOPED_RECALC === 'false' || !groupId) {
-		console.warn(`[RECALC_FALLBACK] Scoped Recalc Disabled or No GroupID. Falling back to global.`);
-		return recalculateBalances(supabase);
+	// INVARIANT: groupId is required for scoped recalculation
+	// NO global fallback - if groupId is missing, fail fast.
+	if (!groupId) {
+		throw new Error('[RECALC_INVARIANT_VIOLATION] groupId is required for scoped recalculation');
 	}
 
 	console.log(`[RECALC_SCOPE_START] { groupId: '${groupId}' }`);
@@ -862,86 +775,25 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 
 			if (txError) throw txError;
 
-			// --- IMPLICIT FRIEND CREATION LOOP (SCOPED) ---
-			let result = calculateBalancesForData(friendsData, expensesData, transactionsData, groupId);
+			// --- INVARIANT: No Implicit Friend Creation in Scoped Recalculation ---
+			// Friend relationships MUST be created during group lifecycle events (Step 3).
+			// If missing links are detected here, it indicates a data integrity issue.
+			//
+			// NOTE:
+			// Legacy groups created before Step 3 may lack complete friend relationships.
+			// This is expected until Step 5 backfill is executed.
+			// Missing friend relationships now cause hard failures by design.
+			// ---
+			const result = calculateBalancesForData(friendsData, expensesData, transactionsData, groupId);
 
 			if (result.missingLinks.size > 0) {
-				console.log(
-					`[IMPLICIT_FRIEND_DETECTED] Found ${result.missingLinks.size} missing global-to-global links in SCOPE ${groupId}. Creating...`
+				throw new Error(
+					`[RECALC_INVARIANT_VIOLATION] Missing friend relationships in group ${groupId}: ` +
+					`${Array.from(result.missingLinks).join(', ')}. ` +
+					`Friend records must be created during group lifecycle events, not recalculation.`
 				);
-
-				// Step 1: Collect unique linkedUserIds for batch profile fetch
-				const uniqueLinkedUserIds = new Set<string>();
-				result.missingLinks.forEach((linkKey) => {
-					const [_, linkedUserId] = linkKey.split(':');
-					if (linkedUserId && linkedUserId !== 'undefined') {
-						uniqueLinkedUserIds.add(linkedUserId);
-					}
-				});
-
-				// Step 2: Batch fetch profiles for identity enrichment (single query)
-				const { data: profiles } = await supabase
-					.from('profiles')
-					.select('id, full_name, email, avatar_url')
-					.in('id', Array.from(uniqueLinkedUserIds));
-
-				// Step 3: Build profileMap for O(1) lookup
-				const profileMap = new Map<string, { id: string; full_name: string | null; email: string | null; avatar_url: string | null }>(
-					(profiles || []).map((p) => [p.id, p])
-				);
-
-				const newFriendsToCreate: any[] = [];
-
-				result.missingLinks.forEach((linkKey) => {
-					const [ownerId, linkedUserId] = linkKey.split(':');
-					if (ownerId && linkedUserId && ownerId !== 'undefined' && linkedUserId !== 'undefined') {
-						console.log('[IMPLICIT FRIEND CREATED]', {
-							owner_id: ownerId,
-							linked_user_id: linkedUserId,
-							group_id: groupId,
-							reason: 'non-zero debt detected during recalculation',
-						});
-
-						// Get identity from profile (fetched above) with fallbacks
-						const profile = profileMap.get(linkedUserId);
-						const friendName = profile?.full_name || 'Unknown User';
-						const friendEmail = profile?.email || null;
-						const friendAvatar = profile?.avatar_url || null;
-
-						newFriendsToCreate.push({
-							owner_id: ownerId,
-							linked_user_id: linkedUserId,
-							name: friendName, // Identity from profiles table
-							email: friendEmail,
-							avatar: friendAvatar,
-							balance: 0,
-							group_breakdown: [],
-							is_implicit: true,
-						});
-					}
-				});
-
-				if (newFriendsToCreate.length > 0) {
-					const { error: createError } = await supabase
-						.from('friends')
-						.upsert(newFriendsToCreate, { onConflict: 'owner_id, linked_user_id', ignoreDuplicates: true });
-					if (createError) throw createError;
-
-					// Re-fetch RELEVANT friends
-					const { data: refreshedFriends, error: refreshError } = await supabase
-						.from('friends')
-						.select('id, owner_id, linked_user_id, group_breakdown')
-						.in('owner_id', involvedUserIds)
-						.in('linked_user_id', involvedUserIds);
-
-					if (refreshError) throw refreshError;
-					friendsData = refreshedFriends || [];
-
-					// Re-run
-					result = calculateBalancesForData(friendsData, expensesData, transactionsData, groupId);
-				}
 			}
-			// ----------------------------------------------
+			// ---
 
 			const { friendBalances: newGroupDeltas, friendGroupBalances, groupUserBalances } = result;
 
@@ -1169,12 +1021,147 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 			console.log(`[RECALC_SCOPE_SUCCESS] { groupId: '${groupId}' }`);
 			return;
 		}
-
-		console.warn(`[RECALC_FALLBACK] Scoped locks exhausted after ${MAX_RETRIES} attempts. Falling back.`);
-		return recalculateBalances(supabase);
+		// INVARIANT: Scoped recalculation must complete or fail - no silent fallback
+		throw new Error(`[RECALC_INVARIANT_VIOLATION] Scoped recalculation failed after ${MAX_RETRIES} retry attempts`);
 	} catch (e: any) {
-		console.error(`[RECALC_FALLBACK] Scoped recalc failed: ${e.message}`, e);
-		// Fallback
-		return recalculateBalances(supabase);
+		// INVARIANT: No global fallback - propagate errors to caller
+		console.error(`[RECALC_ERROR] Scoped recalc failed: ${e.message}`, e);
+		throw e;
 	}
+};
+
+// === NEW: Scoped Recalculation for 2-Person Personal Expenses ===
+// INVARIANT: This function is PURE MATH ONLY
+// - No global fallback
+// - No implicit friend creation
+// - Throws on missing friend records
+export const recalculatePersonalExpense = async (
+	supabase: SupabaseClient,
+	userId1: string,
+	userId2: string
+) => {
+	// Guard: Both IDs must be valid - THROW, don't fallback
+	if (!userId1 || !userId2 || userId1 === userId2) {
+		throw new Error(
+			`[RECALC_PERSONAL_ERROR] Invalid user IDs for personal expense recalculation: userId1=${userId1}, userId2=${userId2}`
+		);
+	}
+
+	console.log(`[RECALC_PERSONAL_START] { userId1: '${userId1.slice(-8)}', userId2: '${userId2.slice(-8)}' }`);
+
+	// 1. Fetch friend records between these two users (A→B and B→A)
+	const { data: friendsData, error: friendsError } = await supabase
+		.from('friends')
+		.select('id, owner_id, linked_user_id, group_breakdown, balance')
+		.or(
+			`and(owner_id.eq.${userId1},linked_user_id.eq.${userId2}),and(owner_id.eq.${userId2},linked_user_id.eq.${userId1})`
+		);
+
+	if (friendsError) throw friendsError;
+
+	// INVARIANT: Friend records MUST exist - no implicit creation
+	if (!friendsData || friendsData.length === 0) {
+		throw new Error(
+			`[RECALC_PERSONAL_ERROR] No friend records found between users ${userId1.slice(-8)} and ${userId2.slice(-8)}. ` +
+			`Friend records must be created before creating personal expenses.`
+		);
+	}
+
+	console.log(`[RECALC_PERSONAL] Found ${friendsData.length} friend records between users`);
+
+	// 2. Fetch ONLY personal expenses where BOTH users participate (group_id = NULL)
+	const { data: allPersonalExpenses, error: expensesError } = await supabase
+		.from('expenses')
+		.select(
+			'id, amount, payer_user_id, payer_id, group_id, description, splits:expense_splits(user_id, friend_id, amount, paid_amount, paid)'
+		)
+		.is('group_id', null)
+		.eq('deleted', false);
+
+	if (expensesError) throw expensesError;
+
+	// Filter to only expenses involving BOTH users
+	const expensesData = (allPersonalExpenses || []).filter((expense: any) => {
+		const participants = new Set<string>();
+
+		// INVARIANT: All expenses have payer_user_id after Step 5 backfill
+		const payerId = expense.payer_user_id;
+		if (payerId) participants.add(payerId);
+
+		// Add split participants
+		expense.splits?.forEach((split: any) => {
+			if (split.user_id) participants.add(split.user_id);
+		});
+
+		return participants.has(userId1) && participants.has(userId2);
+	});
+
+	console.log(`[RECALC_PERSONAL] Found ${expensesData.length} scoped expenses between users`);
+
+	// 3. Fetch ONLY transactions between these two users
+	const { data: transactionsData, error: txError } = await supabase
+		.from('transactions')
+		.select('type, amount, group_id, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
+		.is('group_id', null)
+		.in('type', ['paid', 'received'])
+		.eq('deleted', false);
+
+	if (txError) throw txError;
+
+	// Filter to transactions between the two users
+	const scopedTransactions = (transactionsData || []).filter((tx: any) => {
+		const creatorId = tx.created_by || tx.friend?.owner_id;
+		const otherId = tx.friend?.linked_user_id;
+
+		if (!creatorId || !otherId) return false;
+
+		return (
+			(creatorId === userId1 && otherId === userId2) ||
+			(creatorId === userId2 && otherId === userId1)
+		);
+	});
+
+	console.log(`[RECALC_PERSONAL] Found ${scopedTransactions.length} scoped transactions between users`);
+
+	// 4. Run calculation with scoped data
+	const result = calculateBalancesForData(friendsData, expensesData, scopedTransactions);
+
+	// INVARIANT: No implicit friend creation in recalculation
+	// If missingLinks exist, it means data is corrupted - throw error
+	if (result.missingLinks.size > 0) {
+		throw new Error(
+			`[RECALC_PERSONAL_ERROR] Missing friend links detected during recalculation: ${Array.from(result.missingLinks).join(', ')}. ` +
+			`This indicates data corruption. Friend records must exist before expense creation.`
+		);
+	}
+
+	// 5. Update ONLY the relevant friend records
+	const { friendBalances } = result;
+
+	const updatePromises = Array.from(friendBalances.entries()).map(async ([friendId, balance]) => {
+		const roundedBalance = Math.round(balance * 100) / 100;
+
+		// Get existing breakdown and filter out non-group entries (keep group entries intact)
+		const existingFriend = friendsData.find((f: any) => f.id === friendId);
+		const existingBreakdown = existingFriend?.group_breakdown || [];
+
+		// Keep group entries, update personal total via balance field
+		const groupOnlyBreakdown = existingBreakdown.filter((b: any) => b.groupId && b.groupId !== 'personal');
+
+		console.log(`[RECALC_PERSONAL] Updating friend ${friendId.slice(-8)}: balance ${existingFriend?.balance || 0} → ${roundedBalance}`);
+
+		const { error: updateError } = await supabase
+			.from('friends')
+			.update({
+				balance: roundedBalance,
+				group_breakdown: groupOnlyBreakdown,
+			})
+			.eq('id', friendId);
+
+		if (updateError) throw updateError;
+	});
+
+	await Promise.all(updatePromises);
+
+	console.log(`[RECALC_PERSONAL_SUCCESS] Updated ${friendBalances.size} friend records`);
 };

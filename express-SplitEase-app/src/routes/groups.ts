@@ -1,4 +1,5 @@
 import express from 'express';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../supabase';
 import { getGroupTransactionsWithParties, applyTransactionsToNetBalances } from '../utils/transactionHelpers';
 import { calculatePairwiseExpenseDebt, BALANCE_TOLERANCE } from '../utils/balanceUtils';
@@ -7,6 +8,91 @@ import { recalculateGroupBalances } from '../utils/recalculate';
 
 import { authMiddleware } from '../middleware/auth';
 
+
+// =============================================================================
+// HELPER: Ensure Friend Relationships Exist for All Member Pairs
+// =============================================================================
+// Creates bidirectional friend records (A→B, B→A) for all unordered pairs.
+// Friend relationships are GLOBAL — not scoped to any specific group.
+// This ensures recalculation never encounters missing friend records.
+// =============================================================================
+async function ensureFriendRelationships(
+    supabase: SupabaseClient,
+    memberUserIds: string[]
+): Promise<void> {
+    // Filter out invalid/duplicate IDs
+    const uniqueUserIds = [...new Set(memberUserIds.filter((id) => id && id !== 'undefined'))];
+
+    if (uniqueUserIds.length < 2) {
+        // Need at least 2 users to form a pair
+        return;
+    }
+
+    // Generate all unordered pairs
+    const pairs: { ownerId: string; linkedUserId: string }[] = [];
+    for (let i = 0; i < uniqueUserIds.length; i++) {
+        for (let j = i + 1; j < uniqueUserIds.length; j++) {
+            const userA = uniqueUserIds[i];
+            const userB = uniqueUserIds[j];
+            // Create both directions
+            pairs.push({ ownerId: userA, linkedUserId: userB });
+            pairs.push({ ownerId: userB, linkedUserId: userA });
+        }
+    }
+
+    console.log(`[FRIEND_LIFECYCLE] Creating ${pairs.length} friend relationships for ${uniqueUserIds.length} users`);
+
+    // Batch fetch profiles for identity enrichment
+    const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, avatar_url')
+        .in('id', uniqueUserIds);
+
+    const profileMap = new Map<string, { full_name: string | null; email: string | null; avatar_url: string | null }>(
+        (profiles || []).map((p) => [p.id, p])
+    );
+
+    // Prepare friend records to upsert
+    const friendRecords = pairs.map((pair) => {
+        const profile = profileMap.get(pair.linkedUserId);
+        return {
+            owner_id: pair.ownerId,
+            linked_user_id: pair.linkedUserId,
+            name: profile?.full_name || 'Unknown User',
+            email: profile?.email || null,
+            avatar: profile?.avatar_url || null,
+            balance: 0,
+            group_breakdown: [],
+            is_implicit: true,
+        };
+    });
+
+    // Upsert with conflict handling — idempotent operation
+    const { error } = await supabase
+        .from('friends')
+        .upsert(friendRecords, { onConflict: 'owner_id, linked_user_id', ignoreDuplicates: true });
+
+    if (error) {
+        console.error('[FRIEND_LIFECYCLE_ERROR] Failed to create friend relationships:', error);
+        throw new Error(`Failed to create friend relationships: ${error.message}`);
+    }
+
+    console.log(`[FRIEND_LIFECYCLE_SUCCESS] Created/verified ${friendRecords.length} friend relationships`);
+}
+
+// Helper to get all member userIds from a group
+async function getMemberUserIds(supabase: SupabaseClient, groupId: string): Promise<string[]> {
+    const { data: members } = await supabase
+        .from('group_members')
+        .select('friends(linked_user_id)')
+        .eq('group_id', groupId);
+
+    if (!members) return [];
+
+    return members
+        .map((m: any) => m.friends?.linked_user_id)
+        .filter((id: string | null) => id && id !== 'undefined') as string[];
+}
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -140,13 +226,20 @@ router.post('/', async (req, res) => {
       if (memberError) console.error('Error adding members:', memberError);
   }
 
-  // We should ideally fetch the group again to get full member details, or construct a partial response.
-  // The frontend might expect the full rich object now. 
-  // For simplicity, let's return [] for members as they are added but we don't have their Profile info handy without a refetch.
-  // Actually, wait. 'addGroup' in frontend does invalidateQueries(['groups']). So returning minimal data is fine.
-  // But strictly matching the type 'GroupMember[]' in the response might be required if frontend updates optimistic.
-  // Current DataContext just invalidates. So we can return empty or basic.
-  
+  // STEP 3: Ensure friend relationships exist for all member pairs
+  // This MUST succeed before the group is considered created
+  try {
+      const memberUserIds = await getMemberUserIds(supabase, group.id);
+      if (memberUserIds.length > 1) {
+          await ensureFriendRelationships(supabase, memberUserIds);
+      }
+  } catch (e) {
+      console.error('[GROUP_LIFECYCLE_INVARIANT_VIOLATION]', e);
+      return res.status(500).json({
+          error: 'Failed to create required friend relationships'
+      });
+  }
+
   res.status(201).json({ ...group, members: [] });
 });
 
@@ -161,6 +254,20 @@ router.post('/:id/members', async (req, res) => {
     .insert([{ group_id: id, friend_id: memberId }]);
 
   if (error) return res.status(500).json({ error: error.message });
+
+  // STEP 3: Ensure friend relationships with ALL members (including new one)
+  // This MUST succeed before continuing
+  try {
+      const allMemberUserIds = await getMemberUserIds(supabase, id);
+      if (allMemberUserIds.length > 1) {
+          await ensureFriendRelationships(supabase, allMemberUserIds);
+      }
+  } catch (e) {
+      console.error('[GROUP_LIFECYCLE_INVARIANT_VIOLATION]', e);
+      return res.status(500).json({
+          error: 'Failed to create required friend relationships'
+      });
+  }
 
   const { data: group, error: fetchError } = await supabase
     .from('groups')
@@ -529,7 +636,8 @@ router.delete('/:id', async (req, res) => {
 
   expenses?.forEach((expense: any) => {
      expense.expense_splits.forEach((split: any) => {
-         const uid = split.user_id || split.friend_id;
+         // INVARIANT: All splits have user_id after Step 5 backfill
+         const uid = split.user_id;
          if (uid) {
              const paid = parseFloat(split.paid_amount || '0');
              const share = parseFloat(split.amount || '0');

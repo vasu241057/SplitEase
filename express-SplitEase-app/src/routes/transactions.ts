@@ -1,6 +1,6 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { recalculateBalances, recalculateGroupBalances } from '../utils/recalculate';
+import { recalculateGroupBalances, recalculatePersonalExpense } from '../utils/recalculate';
 
 import { authMiddleware } from '../middleware/auth';
 
@@ -314,7 +314,18 @@ router.post('/settle-up', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Personal transaction: MUST have valid friend record with both IDs
+    const ownerId = friendBefore?.owner_id;
+    const linkedId = friendBefore?.linked_user_id;
+    if (!ownerId || !linkedId) {
+      return res.status(400).json({ error: 'Personal transactions require a valid friend record with linked user' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, ownerId, linkedId);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
 
   // Fetch friend balance AFTER recalculation
@@ -397,7 +408,20 @@ router.delete('/:id', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Fetch friend record to get participants for scoped recalculation
+    const { data: txData } = await supabase.from('transactions').select('friend_id, friend:friends(owner_id, linked_user_id)').eq('id', id).single();
+    const friendData = txData?.friend as { owner_id?: string; linked_user_id?: string } | null;
+    const ownerId = friendData?.owner_id;
+    const linkedId = friendData?.linked_user_id;
+    if (!ownerId || !linkedId) {
+      return res.status(400).json({ error: 'Personal transactions require a valid friend record with linked user' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, ownerId, linkedId);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
 
   // System Comment
@@ -433,7 +457,18 @@ router.post('/:id/restore', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    await recalculateBalances(supabase);
+    // Personal transaction: MUST have valid friend record with both IDs
+    const recalcOwnerId = data?.friend?.owner_id;
+    const recalcLinkedId = data?.friend?.linked_user_id;
+    if (!recalcOwnerId || !recalcLinkedId) {
+      return res.status(400).json({ error: 'Personal transactions require a valid friend record with linked user' });
+    }
+    // No global fallback - scoped recalc only
+    try {
+      await recalculatePersonalExpense(supabase, recalcOwnerId, recalcLinkedId);
+    } catch (e: any) {
+      return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
+    }
   }
   
   // Format return

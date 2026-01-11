@@ -246,14 +246,17 @@ export function AddExpense() {
     // Only run default init if NOT in edit mode and NOT initialized
     if (!location.state?.editExpense) {
         // Combine Group Members + Selected Friends
+        // Use global userId (m.userId), NOT local friend ID (m.id)
         const members = new Set([currentUser.id])
         if (selectedGroup) {
         selectedGroup.members.forEach(m => {
-            if (m.userId !== currentUser.id) members.add(m.id)
+            if (m.userId && m.userId !== currentUser.id) members.add(m.userId)
         })
         }
         if (selectedFriends.length > 0) {
-        selectedFriends.forEach(f => members.add(f.id))
+        selectedFriends.forEach(f => {
+            if (f.linked_user_id) members.add(f.linked_user_id)
+        })
         }
         setGroupSplitMembers(Array.from(members))
         // Only reset payers if we are NOT in edit mode (which we are not here)
@@ -527,14 +530,22 @@ export function AddExpense() {
              }
         })
         
-        // Map friend IDs to linked_user_id if available
-        splits = splits.map(s => {
-           const friend = friends.find(f => f.id === s.userId)
-           if (friend && friend.linked_user_id) {
-              return { ...s, userId: friend.linked_user_id }
-           }
-           return s
+        // STRICT VALIDATION: All participants must have a valid global userId
+        // Since activeMembers now uses m.userId and f.linked_user_id exclusively,
+        // all splits should already have global userIds. Validate this before API call.
+        const invalidSplits = splits.filter(s => {
+          // Check if this userId is the currentUser or a valid global user
+          if (s.userId === currentUser.id) return false // Current user is always valid
+          // Check if it's a known linked_user_id from friends or a group member's userId
+          const isKnownLinkedUser = friends.some(f => f.linked_user_id === s.userId)
+          const isGroupMemberUserId = selectedGroup?.members.some(m => m.userId === s.userId)
+          return !isKnownLinkedUser && !isGroupMemberUserId
         })
+        
+        if (invalidSplits.length > 0) {
+          throw new Error(`Cannot save expense: Some participants do not have a valid global user ID. ` +
+            `Friends must be linked to a registered user to be included in expenses.`)
+        }
 
         // Determine main payer (for display mostly)
         // If single payer, easy. If multi, pick the one who paid most? or just first.
@@ -628,15 +639,22 @@ export function AddExpense() {
     const members = new Set([currentUser.id])
     if (selectedGroup) {
       selectedGroup.members.forEach(m => {
-          // Avoid adding self-friend ID, we already added currentUser.id (which represents 'You')
-          if (m.userId !== currentUser.id) {
-              members.add(m.id)
+          // Use global userId (m.userId), NOT local friend ID (m.id)
+          // Skip if it's the current user (already added)
+          if (m.userId && m.userId !== currentUser.id) {
+              members.add(m.userId)
           }
       })
     }
-    selectedFriends.forEach(f => members.add(f.id))
+    // For selected friends, use linked_user_id (global identity) if available
+    selectedFriends.forEach(f => {
+      if (f.linked_user_id) {
+        members.add(f.linked_user_id)
+      }
+      // Note: Friends without linked_user_id will be blocked at save validation
+    })
     return Array.from(members)
-  }, [selectedGroup, selectedFriends])
+  }, [selectedGroup, selectedFriends, currentUser.id])
 
   // Auto-switch back to Step 2 if search is cleared and we have participants
   useEffect(() => {
