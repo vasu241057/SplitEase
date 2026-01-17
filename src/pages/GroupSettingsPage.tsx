@@ -1,6 +1,7 @@
 /* eslint-disable */
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight, Loader2 } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
@@ -16,6 +17,7 @@ import { calculateGroupSpendingSummary, formatCentsToRupees } from "../utils/spe
 export function GroupSettingsPage() {
     const { id } = useParams<{ id: string }>()
     const navigate = useNavigate()
+    const queryClient = useQueryClient()
     const { groups, currentUser, refreshGroups, expenses } = useData()
     
     // Derived State
@@ -90,12 +92,12 @@ export function GroupSettingsPage() {
             // Update DB via API
             await api.put(`/api/groups/${group.id}`, { simplifyDebtsEnabled: enabled });
             
-            // Note: We don't set local state manually because 'group' will be refreshed
-            // via React Query / Context invalidation usually. 
-            // However, for immediate feedback if 'refreshGroups' is slow, 
-            // the UI might lag. But 'refreshGroups' is called below.
-            
-            await refreshGroups();
+            // INVARIANT: Simplify toggle affects both group.simplified_debts AND friend.group_breakdown
+            // Must invalidate BOTH queries to prevent stale UI state
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: ['groups'] }),
+                queryClient.invalidateQueries({ queryKey: ['friends'] })
+            ]);
 
         } catch (error: any) {
             console.error("Failed to toggle simplify debts:", error);
