@@ -24,9 +24,8 @@ vi.mock('../../src/middleware/auth', () => ({
 
 // Mock Recalculate Logic - include ALL exports used by expenses.ts
 vi.mock('../../src/utils/recalculate', () => ({
-    recalculateBalances: vi.fn().mockResolvedValue(undefined),
     recalculateGroupBalances: vi.fn().mockResolvedValue(undefined),
-    recalculatePersonalExpense: vi.fn().mockResolvedValue(undefined)
+    recalculateUserPersonalLedger: vi.fn().mockResolvedValue(undefined)
 }));
 
 // Mock Notification logic (Push) to avoid internal imports/errors
@@ -193,11 +192,11 @@ describe('Expense Routes Integration', () => {
         // === N-PERSON PERSONAL EXPENSE TESTS (REJECTED BY DESIGN) ===
         // INVARIANT: Personal expenses currently support exactly 2 participants
 
-        it('rejects 3-person personal expense (N-person unsupported)', async () => {
-             mockSupabase.from.mockReturnValue(createChain({ id: 'exp_excluded', amount: 100 }));
+        it('accepts 3-person personal expense (N-person supported)', async () => {
+             mockSupabase.from.mockReturnValue(createChain({ id: 'exp_included', amount: 100 }));
             
             const res = await request(app).post('/expenses').send({
-                description: 'Excluded',
+                description: 'Included',
                 amount: 100,
                 payerId: 'user_A',
                 splits: [
@@ -206,12 +205,10 @@ describe('Expense Routes Integration', () => {
                     { userId: 'user_C', amount: 50, paidAmount: 0 }
                 ]
             });
-            // N-person personal expenses are rejected with 500 due to invariant
-            expect(res.status).toBe(500);
-            expect(res.body.error).toMatch(/2 participants/);
+            expect(res.status).toBe(201);
         });
 
-        it('rejects multi-payer 3-person scenario (N-person unsupported)', async () => {
+        it('accepts multi-payer 3-person scenario (N-person supported)', async () => {
             mockSupabase.from.mockReturnValue(createChain({ id: 'exp_multi', amount: 100 }));
 
             const res = await request(app).post('/expenses').send({
@@ -225,11 +222,10 @@ describe('Expense Routes Integration', () => {
                 ]
             });
             
-            expect(res.status).toBe(500);
-            expect(res.body.error).toMatch(/2 participants/);
+            expect(res.status).toBe(201);
         });
         
-        it('rejects 3-person with one paying 0 (N-person unsupported)', async () => {
+        it('accepts 3-person with one paying 0 (N-person supported)', async () => {
             mockSupabase.from.mockReturnValue(createChain({ id: 'exp_multi_zero', amount: 100 }));
             const res = await request(app).post('/expenses').send({
                 description: 'Multi Zero Payer',
@@ -241,11 +237,10 @@ describe('Expense Routes Integration', () => {
                     { userId: 'user_C', amount: 25, paidAmount: 0 }
                 ]
             });
-            expect(res.status).toBe(500);
-            expect(res.body.error).toMatch(/2 participants/);
+            expect(res.status).toBe(201);
         });
 
-        it('rejects 3-person penny split (N-person unsupported)', async () => {
+        it('accepts 3-person penny split (N-person supported)', async () => {
              mockSupabase.from.mockReturnValue(createChain({ id: 'exp_penny', amount: 100 }));
              
              const res = await request(app).post('/expenses').send({
@@ -259,8 +254,7 @@ describe('Expense Routes Integration', () => {
                 ]
             });
              
-            expect(res.status).toBe(500);
-            expect(res.body.error).toMatch(/2 participants/);
+            expect(res.status).toBe(201);
         });
         
         // === DELETE/RESTORE FLOW ===
