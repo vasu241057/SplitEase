@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react"
+import { useMemo, useState } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { ArrowLeft, Banknote, Users, ArrowRightLeft, ChevronDown, ChevronUp } from "lucide-react"
 import { useData } from "../context/DataContext"
@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Card } from "../components/ui/card"
 import { cn } from "../utils/cn"
+import { groupByMonth } from "../utils/dateUtils"
 
 import { calculatePairwiseExpenseDebt, matchesMember } from "../utils/groupBalanceUtils"
 
@@ -32,31 +33,20 @@ export function FriendDetail() {
       // Using a small epsilon for float comparison.
       const isRouted = b.rawAmount !== undefined && Math.abs(b.amount - b.rawAmount) > 0.01;
       
+      // Detect personal entry (groupId is null)
+      const isPersonal = b.groupId === null;
+      
       return {
-        name: b.name,
+        name: b.name, // Backend already provides "Personal Expenses" for personal entry
         amount: b.amount, // EFFECTIVE Amount (Primary Display)
         rawAmount: b.rawAmount, // Available for debug/future
-        isGroup: true,
-        id: b.groupId, // helper for keys
+        isGroup: !isPersonal, // false for personal, true for groups
+        isPersonal, // true if this is the personal entry
+        id: b.groupId, // helper for keys (null for personal)
         isRouted // For UI Badge
       };
     }).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
   }, [friend?.group_breakdown]);
-
-  // DEV-ONLY: Invariant Assertion
-  useEffect(() => {
-    if (!friend) return;
-    const breakdownSum = breakdown.reduce((acc, b) => acc + b.amount, 0);
-    // Allow small floating point diff
-    if (Math.abs(friend.balance - breakdownSum) > 0.1) {
-       console.error('[INVARIANT VIOLATION] Friend Balance != Breakdown Sum', {
-          id: friend.id,
-          balance: friend.balance,
-          breakdownSum,
-          diff: friend.balance - breakdownSum
-       });
-    }
-  }, [friend, breakdown]);
 
 
   // Memoize all sorted items (Groups + Personal) for the timeline
@@ -160,6 +150,11 @@ export function FriendDetail() {
     return combinedItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [friend, currentUser, groups, expenses, transactions])
 
+  // Group sorted items by month
+  const itemsByMonth = useMemo(() => {
+    return groupByMonth(sortedItems, item => new Date(item.date));
+  }, [sortedItems]);
+
   if (!friend) {
     return <div>Friend not found</div>
   }
@@ -207,9 +202,9 @@ export function FriendDetail() {
             )}
             >
             {friend.balance === 0
-                ? "Settled"
+                ? "All settled"
                 : friend.balance > 0
-                ? `Owes you ₹${friend.balance.toFixed(2)}`
+                ? `You are owed ₹${friend.balance.toFixed(2)}`
                 : `You owe ₹${Math.abs(friend.balance).toFixed(2)}`}
             </div>
         </div>
@@ -228,7 +223,7 @@ export function FriendDetail() {
                             )}
                         </span>
                         <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
-                            {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
+                            {item.amount > 0 ? "you are owed" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
                         </span>
                     </div>
                 ))}
@@ -265,13 +260,22 @@ export function FriendDetail() {
       </Card>
 
       {/* UNIFIED LIST */}
-      <div className="space-y-3">
+      <div className="space-y-6">
         {sortedItems.length === 0 ? (
              <p className="text-muted-foreground text-sm text-center py-8">No unified history yet.</p>
         ) : (
-            sortedItems.map(item => {
+            itemsByMonth.map(({ monthKey, label, items }) => (
+              <div key={monthKey} className="space-y-3">
+                {/* Month Header */}
+                <h3 className="text-sm font-semibold text-muted-foreground sticky top-0 bg-background py-2 z-10">
+                  {label}
+                </h3>
+                
+                {/* Items for this month */}
+                <div className="space-y-3">
+                  {items.map(item => {
                 if (item.type === 'group') {
-                    // GROUP CARD
+                    // GROUP CARD - Keep existing layout but fix wording
                     return (
                         <Card 
                             key={`group-${item.id}`}
@@ -288,100 +292,135 @@ export function FriendDetail() {
                                         Math.abs(item.amount || 0) < 0.01 ? "text-muted-foreground" :
                                         (item.amount || 0) > 0 ? "text-green-600" : "text-red-600"
                                     )}>
-                                        {Math.abs(item.amount || 0) < 0.01 ? "Settled" : 
-                                        (item.amount || 0) > 0 ? `owes you ₹${(item.amount || 0).toFixed(2)}` : 
+                                        {Math.abs(item.amount || 0) < 0.01 ? "All settled" : 
+                                        (item.amount || 0) > 0 ? `you are owed ₹${(item.amount || 0).toFixed(2)}` : 
                                         `you owe ₹${Math.abs(item.amount || 0).toFixed(2)}`}
                                     </p>
                                 </div>
                             </div>
                             <div className="text-xs text-muted-foreground">
-                                {new Date(item.date).getFullYear() > 1970 ? new Date(item.date).toLocaleDateString() : 'No activity'}
+                                {new Date(item.date).getFullYear() > 1970 ? new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'No activity'}
                             </div>
                         </Card>
                     );
                 } else if (item.type === 'expense') {
-                    // EXPENSE CARD
+                    // EXPENSE CARD - New layout with date block
                     const expense = item.data;
+                    const expenseDate = new Date(expense.date);
+                    const monthShort = expenseDate.toLocaleDateString('en-US', { month: 'short' });
+                    const dayNum = expenseDate.getDate();
+                    
+                    // Calculate payer text
+                    const payers = expense.splits.filter((s: any) => (s.paidAmount || 0) > 0);
+                    let payerText = "";
+                    if (payers.length > 1) {
+                      // Multi-payer: Always show count + total (perspective-neutral)
+                      payerText = `${payers.length} people paid ₹${expense.amount}`;
+                    } else if (payers.length === 1) {
+                      const payer = payers[0];
+                      if (payer.userId === currentUser.id) {
+                        payerText = `You paid ₹${payer.paidAmount}`;
+                      } else {
+                        payerText = `${friend.name} paid ₹${payer.paidAmount}`;
+                      }
+                    } else {
+                      payerText = expense.payerId === currentUser.id ? `You paid ₹${expense.amount}` : `${friend.name} paid ₹${expense.amount}`;
+                    }
+                    
+                    // Calculate net effect
+                    const meRef = { id: currentUser.id, userId: currentUser.id };
+                    const friendRef = { id: friend.id, userId: friend.linked_user_id || undefined };
+                    const debt = calculatePairwiseExpenseDebt({ splits: expense.splits }, meRef, friendRef);
+                    
                     return (
                         <Card 
                             key={`expense-${item.id}`}
                             className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
                             onClick={() => navigate(`/expenses/${expense.id}`)}
                         >
-                            <div className="flex items-center p-4 gap-4">
-                                <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                            <div className="flex items-center py-4 pl-1 pr-2 gap-3">
+                                {/* Left: Date + Icon grouped */}
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <div className="flex flex-col items-center justify-center w-10 text-center">
+                                    <span className="text-xs font-medium text-muted-foreground uppercase leading-tight">{monthShort}</span>
+                                    <span className="text-lg font-bold leading-tight">{dayNum}</span>
+                                  </div>
+                                  <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
                                     <Banknote className="h-5 w-5" />
+                                  </div>
                                 </div>
+                                
+                                {/* Middle: Description + Payer */}
                                 <div className="flex-1 min-w-0">
-                                    <p className="font-medium truncate">{expense.description}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        {new Date(expense.date).toLocaleDateString()}
-                                    </p>
+                                  <p className="text-base font-medium truncate">{expense.description}</p>
+                                  <p className="text-sm text-muted-foreground">{payerText}</p>
                                 </div>
-                                <div className="text-right">
-                                    <p className="font-bold">₹{expense.amount.toFixed(2)}</p>
-                                    <div className="text-xs text-muted-foreground flex flex-col items-end">
-                                        <span>
-                                            {expense.payerId === currentUser.id ? "You paid" : "They paid"}
-                                        </span>
-                                        {(() => {
-                                            // Calculate actual debt effect
-                                            // We must construct generic Member objects for the utility
-                                            const meRef = { id: currentUser.id, userId: currentUser.id };
-                                            // For friend, we try to use linked_user_id if available for userId matching
-                                            const friendRef = { 
-                                                id: friend.id, 
-                                                userId: friend.linked_user_id || undefined 
-                                            };
-                                            
-                                            const debt = calculatePairwiseExpenseDebt({ splits: expense.splits }, meRef, friendRef);
-                                            // debt > 0 means Friend Owes Me (I lent)
-                                            // debt < 0 means I Owe Friend (I borrowed)
-                                            
-                                            if (Math.abs(debt) < 0.01) return <span className="text-xs italic">Settled</span>;
-
-                                            return (
-                                                <span className={debt > 0 ? "text-green-600" : "text-red-600"}>
-                                                    {debt > 0 ? `You lent ₹${debt.toFixed(2)}` : `You borrowed ₹${Math.abs(debt).toFixed(2)}`}
-                                                </span>
-                                            )
-                                        })()}
-                                    </div>
+                                
+                                {/* Right: Net Effect (two lines) */}
+                                <div className="text-right shrink-0">
+                                  {Math.abs(debt) < 0.01 ? (
+                                    <p className="text-sm text-muted-foreground">Settled</p>
+                                  ) : debt > 0 ? (
+                                    <>
+                                      <p className="text-sm text-green-600">You lent</p>
+                                      <p className="text-base font-bold text-green-600">₹{debt.toFixed(0)}</p>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p className="text-sm text-red-600">You borrowed</p>
+                                      <p className="text-base font-bold text-red-600">₹{Math.abs(debt).toFixed(0)}</p>
+                                    </>
+                                  )}
                                 </div>
                             </div>
                         </Card>
                     );
                 } else {
-                    // TRANSACTION CARD
+                    // TRANSACTION CARD - New layout with date block
                     const transaction = item.data;
                     const isPaid = transaction.fromId === currentUser.id;
+                    const txDate = new Date(transaction.date);
+                    const monthShort = txDate.toLocaleDateString('en-US', { month: 'short' });
+                    const dayNum = txDate.getDate();
+                    
                     return (
                         <Card 
                             key={`trans-${item.id}`}
                             className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
                             onClick={() => navigate(`/payments/${transaction.id}`)}
                         >
-                            <div className="flex items-center p-4 gap-4">
-                                <div className="h-10 w-10 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center text-green-600">
+                            <div className="flex items-center py-4 pl-1 pr-2 gap-3">
+                                {/* Left: Date + Icon grouped */}
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <div className="flex flex-col items-center justify-center w-10 text-center">
+                                    <span className="text-xs font-medium text-muted-foreground uppercase leading-tight">{monthShort}</span>
+                                    <span className="text-lg font-bold leading-tight">{dayNum}</span>
+                                  </div>
+                                  <div className="h-10 w-10 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center text-green-600">
                                     <ArrowRightLeft className="h-5 w-5" />
+                                  </div>
                                 </div>
+                                
+                                {/* Middle: Description */}
                                 <div className="flex-1 min-w-0">
-                                    <p className="font-medium truncate">Settle Up</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        {new Date(transaction.date).toLocaleDateString()}
-                                    </p>
+                                  <p className="text-base font-medium truncate">{isPaid ? `You paid ${friend.name}` : `${friend.name} paid you`}</p>
+                                  <p className="text-sm text-muted-foreground">Settle up</p>
                                 </div>
-                                <div className="text-right">
-                                    <p className="font-bold">₹{transaction.amount.toFixed(2)}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        {isPaid ? "You paid" : "You received"}
-                                    </p>
+                                
+                                {/* Right: Net Effect */}
+                                <div className="text-right shrink-0">
+                                  <p className={cn("text-base font-bold", isPaid ? "text-red-600" : "text-green-600")}>
+                                    {isPaid ? `-₹${transaction.amount}` : `+₹${transaction.amount}`}
+                                  </p>
                                 </div>
                             </div>
                         </Card>
                     );
                 }
-            })
+            })}
+                </div>
+              </div>
+            ))
         )}
       </div>
     </div>

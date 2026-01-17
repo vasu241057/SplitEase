@@ -139,14 +139,15 @@ describe('GroupDetail Component', () => {
     });
 
     it('shows correct balance summary from hook', () => {
-         // The component renders individual cards "owes you ₹50.00"
+         // The component now shows expense cards with "You lent ₹X" instead of "owes you"
          render(
              <MemoryRouter>
                 <GroupDetail />
              </MemoryRouter>
          );
-         expect(screen.getByText(/owes you/i)).toBeInTheDocument();
-         expect(screen.getByText(/50.00/)).toBeInTheDocument();
+         // New UI: expense cards show "You lent" for net effect
+         expect(screen.getByText(/You lent/i)).toBeInTheDocument();
+         expect(screen.getByText(/₹50/)).toBeInTheDocument();
     });
 
 });

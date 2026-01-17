@@ -1,3 +1,4 @@
+import { useMemo } from "react"
 import { Banknote, ArrowRightLeft, Users, User } from "lucide-react"
 import { cn } from "../utils/cn"
 import { useData } from "../context/DataContext"
@@ -5,6 +6,7 @@ import { Card } from "../components/ui/card"
 import { FloatingAddExpense } from "../components/FloatingAddExpense"
 import { Link } from "react-router-dom"
 import { Skeleton } from "../components/ui/skeleton"
+import { groupByMonth } from "../utils/dateUtils"
 
 export function Activity() {
   const { allExpenses, transactions, currentUser, loading, groups } = useData()
@@ -44,6 +46,11 @@ export function Activity() {
       .map(t => ({ ...t, type: 'payment' as const }))
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
+  // Group activities by month
+  const activitiesByMonth = useMemo(() => {
+    return groupByMonth(activities, activity => new Date(activity.date));
+  }, [activities]);
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Activity</h1>
@@ -73,66 +80,80 @@ export function Activity() {
               No activity yet.
             </p>
           ) : (
-            activities.map((activity) => {
-              const group = groups.find(g => g.id === activity.groupId)
-              const ContextIcon = group ? Users : User
-              const contextLabel = group ? group.name : "Personal"
-              const isGroup = !!group
+            <div className="space-y-6">
+              {activitiesByMonth.map(({ monthKey, label, items }) => (
+                <div key={monthKey} className="space-y-3">
+                  {/* Month Header */}
+                  <h3 className="text-sm font-semibold text-muted-foreground sticky top-0 bg-background py-2 z-10">
+                    {label}
+                  </h3>
+                  
+                  {/* Items for this month */}
+                  <div className="space-y-3">
+                    {items.map((activity) => {
+                      const group = groups.find(g => g.id === activity.groupId)
+                      const ContextIcon = group ? Users : User
+                      const contextLabel = group ? group.name : "Personal"
+                      const isGroup = !!group
 
-              const content = (
-                <div className="flex items-center p-4 gap-4">
-                  <div className={cn(
-                    "h-10 w-10 rounded-full flex items-center justify-center transition-colors",
-                    activity.deleted 
-                      ? "bg-red-100 text-red-500" 
-                      : isGroup 
-                        ? "bg-indigo-50 text-indigo-600" 
-                        : "bg-primary/10 text-primary"
-                  )}>
-                    {activity.deleted ? (
-                       <Banknote className="h-5 w-5" />
-                    ) : activity.type === 'expense' ? (
-                      <Banknote className="h-5 w-5" />
-                    ) : (
-                      <ArrowRightLeft className="h-5 w-5" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={cn("font-medium truncate", activity.deleted && "line-through text-muted-foreground")}>
-                      {activity.description || (activity.type === 'expense' ? 'Expense' : 'Payment')}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1 bg-muted/50 px-1.5 py-0.5 rounded-sm">
-                        <ContextIcon className="h-3 w-3" />
-                        <span className="font-medium truncate max-w-[100px]">{contextLabel}</span>
-                      </div>
-                      <span>•</span>
-                      <span>{new Date(activity.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={cn("font-bold", activity.deleted && "line-through text-muted-foreground")}>₹{activity.amount}</p>
-                    <p className="text-xs text-muted-foreground capitalize">
-                      {activity.deleted ? "Deleted" : activity.type}
-                    </p>
+                      const content = (
+                        <div className="flex items-center p-4 gap-4">
+                          <div className={cn(
+                            "h-10 w-10 rounded-full flex items-center justify-center transition-colors",
+                            activity.deleted 
+                              ? "bg-red-100 text-red-500" 
+                              : isGroup 
+                                ? "bg-indigo-50 text-indigo-600" 
+                                : "bg-primary/10 text-primary"
+                          )}>
+                            {activity.deleted ? (
+                               <Banknote className="h-5 w-5" />
+                            ) : activity.type === 'expense' ? (
+                              <Banknote className="h-5 w-5" />
+                            ) : (
+                              <ArrowRightLeft className="h-5 w-5" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={cn("font-medium truncate", activity.deleted && "line-through text-muted-foreground")}>
+                              {activity.description || (activity.type === 'expense' ? 'Expense' : 'Payment')}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-1 bg-muted/50 px-1.5 py-0.5 rounded-sm">
+                                <ContextIcon className="h-3 w-3" />
+                                <span className="font-medium truncate max-w-[100px]">{contextLabel}</span>
+                              </div>
+                              <span>•</span>
+                              <span>{new Date(activity.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className={cn("font-bold", activity.deleted && "line-through text-muted-foreground")}>₹{activity.amount}</p>
+                            <p className="text-xs text-muted-foreground capitalize">
+                              {activity.deleted ? "Deleted" : activity.type}
+                            </p>
+                          </div>
+                        </div>
+                      )
+
+                      return (
+                        <Card key={activity.id} className={cn("overflow-hidden", activity.deleted && "opacity-60 bg-muted/50")}>
+                          {activity.type === 'expense' ? (
+                            <Link to={`/expenses/${activity.id}`} className="block">
+                              {content}
+                            </Link>
+                          ) : (
+                            <Link to={`/payments/${activity.id}`} className="block">
+                              {content}
+                            </Link>
+                          )}
+                        </Card>
+                      )
+                    })}
                   </div>
                 </div>
-              )
-
-              return (
-                <Card key={activity.id} className={cn("overflow-hidden", activity.deleted && "opacity-60 bg-muted/50")}>
-                  {activity.type === 'expense' ? (
-                    <Link to={`/expenses/${activity.id}`} className="block">
-                      {content}
-                    </Link>
-                  ) : (
-                    <Link to={`/payments/${activity.id}`} className="block">
-                      {content}
-                    </Link>
-                  )}
-                </Card>
-              )
-            })
+              ))}
+            </div>
           )}
         </div>
       )}

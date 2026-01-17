@@ -4,7 +4,8 @@ import { useParams, useNavigate } from "react-router-dom"
 import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight, Loader2 } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
-import { useGroupBalance } from "../hooks/useGroupBalance"
+// DEPRECATED: useGroupBalance hook is no longer needed here
+// import { useGroupBalance } from "../hooks/useGroupBalance"
 import { api } from "../utils/api"
 import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
@@ -19,11 +20,32 @@ export function GroupSettingsPage() {
     
     // Derived State
     const group = groups.find(g => g.id === id)
-    const { isGroupSettled, isMemberFullySettled } = useGroupBalance(group)
+    // DEPRECATED: useGroupBalance hook is no longer used for action gating
+    // const { isGroupSettled, isMemberFullySettled } = useGroupBalance(group)
     
-    // Find current user's member record to check if they're settled
-    const currentUserMember = group?.members.find(m => m.userId === currentUser.id)
-    const isCurrentUserSettled = currentUserMember ? isMemberFullySettled(currentUserMember.id) : true
+    // =========================================================================
+    // ACTION GATING LOGIC (Truthful UI)
+    // =========================================================================
+    
+    // DELETE GROUP: Can delete only if ALL members have net balance === 0
+    const isGroupSettled = useMemo(() => {
+        if (!group || !group.user_balances) return true;
+        const balances = Object.values(group.user_balances) as number[];
+        return balances.every(bal => Math.abs(bal) < 0.01);
+    }, [group]);
+    
+    // LEAVE GROUP: Current user can leave only if their balance === 0
+    const canLeaveGroup = useMemo(() => {
+        if (!group) return true;
+        return Math.abs(group.currentUserBalance || 0) < 0.01;
+    }, [group]);
+    
+    // REMOVE MEMBER: Helper to check if a specific member can be removed
+    const canRemoveMember = (memberUserId: string): boolean => {
+        if (!group || !group.user_balances) return true;
+        const memberBalance = group.user_balances[memberUserId] || 0;
+        return Math.abs(memberBalance) < 0.01;
+    };
 
     // Local State
     const [isEditingName, setIsEditingName] = useState(false)
@@ -226,8 +248,8 @@ export function GroupSettingsPage() {
                     <div className="bg-card border rounded-lg overflow-hidden divide-y">
                         {group.members.map((member: any) => {
                             const isMe = member.userId === currentUser.id;
-                            // Use pairwise balance check instead of net position
-                            const isSettled = isMemberFullySettled(member.id);
+                            // Use user_balances to check if member can be removed
+                            const isSettled = canRemoveMember(member.userId);
                             
                             return (
                                 <div key={member.id} className="flex items-center justify-between p-3 hover:bg-muted/30 transition-colors">
@@ -350,7 +372,7 @@ export function GroupSettingsPage() {
                             <span className="flex-1 text-left">Settle Up</span>
                         </Button>
                         
-                        {isCurrentUserSettled ? (
+                        {canLeaveGroup ? (
                             <Button variant="outline" className="w-full justify-start h-12 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20" onClick={() => {
                                 setConfirmAction({
                                     type: 'leave',

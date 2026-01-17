@@ -244,6 +244,11 @@ const calculateBalancesForData = (
 		// INVARIANT: All expenses have payer_user_id after Step 5 backfill
 		const payerId = expense.payer_user_id;
 		if (!payerId) {
+			console.error('[CALC_INVARIANT_VIOLATION]', {
+				reason: 'missing_payer',
+				expenseId: expense.id,
+				expense: { id: expense.id, group_id: expense.group_id, payer_user_id: expense.payer_user_id },
+			});
 			throw new Error(`[RECALC_INVARIANT_VIOLATION] payer_user_id is required. Expense: ${expense.id}`);
 		}
 
@@ -254,6 +259,11 @@ const calculateBalancesForData = (
 			// No fallback to friend_id — if missing, throw immediately.
 			
 			if (!split.user_id) {
+				console.error('[CALC_INVARIANT_VIOLATION]', {
+					reason: 'missing_user_id',
+					expenseId: expense.id,
+					split: split,
+				});
 				throw new Error(
 					`[RECALC_INVARIANT_VIOLATION] split.user_id is required. ` +
 					`Expense: ${expense.id}, Group: ${expense.group_id || 'personal'}, Split: ${JSON.stringify(split)}`
@@ -432,6 +442,11 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
 		const result = calculateBalancesForData(friendsData || [], expensesData, transactionsData);
 
 		if (result.missingLinks.size > 0) {
+			console.error('[CALC_INVARIANT_VIOLATION]', {
+				reason: 'missing_links',
+				context: 'global_recalc',
+				missingLinks: Array.from(result.missingLinks),
+			});
 			throw new Error(
 				`[RECALC_INVARIANT_VIOLATION] Missing friend relationships detected: ` +
 				`${Array.from(result.missingLinks).join(', ')}. ` +
@@ -623,7 +638,10 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
 		// RUN CHECKS & CORRECTIONS
 		verifyInvariants(pendingUpdates);
 
-		const friendUpdatePromises = pendingUpdates.map(async (update) => {
+		// Build updates array for atomic RPC
+		const friendUpdates: Array<{ friend_id: string; balance: number; group_breakdown: any[] }> = [];
+
+		pendingUpdates.forEach((update) => {
 			const currentRecord = currentBalancesMap.get(update.id);
 			const oldBalance = currentRecord?.balance || 0;
 			const oldBreakdownJSON = JSON.stringify(currentRecord?.group_breakdown || []);
@@ -633,17 +651,34 @@ export const recalculateBalances = async (supabase: SupabaseClient) => {
 			const breakdownChanged = oldBreakdownJSON !== newBreakdownJSON;
 
 			if (balanceChanged || breakdownChanged) {
-				await supabase
-					.from('friends')
-					.update({
-						balance: update.balance, // Saved balance IS NOW EFFECTIVE
-						group_breakdown: update.breakdown,
-					})
-					.eq('id', update.id);
+				friendUpdates.push({
+					friend_id: update.id,
+					balance: update.balance, // Saved balance IS NOW EFFECTIVE
+					group_breakdown: update.breakdown,
+				});
 			}
 		});
 
-		await Promise.all([...friendUpdatePromises, ...groupUpdatePromises]);
+		// Persist group updates
+		await Promise.all(groupUpdatePromises);
+
+		// Persist friend updates atomically via RPC
+		if (friendUpdates.length > 0) {
+			const { error: rpcError } = await supabase.rpc('update_friend_balances_atomic', {
+				p_updates: friendUpdates,
+			});
+
+			if (rpcError) {
+				console.error('[RECALC_GLOBAL_RPC_ERROR]', {
+					updateCount: friendUpdates.length,
+					error: rpcError.message,
+				});
+				throw new Error(`[RECALC_GLOBAL_RPC_ERROR] Atomic update failed: ${rpcError.message}`);
+			}
+
+			console.log(`[RECALC_GLOBAL_RPC_SUCCESS] Applied ${friendUpdates.length} friend updates atomically`);
+		}
+
 		console.log('[IDENTITY_SYNC_COMPLETE] Global Recalc Synced.');
 		return; // Success
 	}
@@ -787,6 +822,12 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 			const result = calculateBalancesForData(friendsData, expensesData, transactionsData, groupId);
 
 			if (result.missingLinks.size > 0) {
+				console.error('[CALC_INVARIANT_VIOLATION]', {
+					reason: 'missing_links',
+					context: 'scoped_group_recalc',
+					groupId,
+					missingLinks: Array.from(result.missingLinks),
+				});
 				throw new Error(
 					`[RECALC_INVARIANT_VIOLATION] Missing friend relationships in group ${groupId}: ` +
 					`${Array.from(result.missingLinks).join(', ')}. ` +
@@ -910,9 +951,11 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 			}
 
 			// ========================================================================
-			// STEP 2: Now run updates using the pre-computed simplifiedDebts
+			// STEP 2: Build updates array and call atomic RPC
 			// ========================================================================
-			const updates = friendsData.map(async (friend: any) => {
+			const friendUpdates: Array<{ friend_id: string; balance: number; group_breakdown: any[] }> = [];
+
+			friendsData.forEach((friend: any) => {
 				const friendId = friend.id;
 
 				// Get new Amount for this group (Raw)
@@ -995,17 +1038,15 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 				const breakdownChanged = oldBreakdownJSON !== newBreakdownJSON;
 
 				if (!balanceChanged && !breakdownChanged) {
-					return; // SKIP WRITE - no changes
+					return; // SKIP - no changes for this friend
 				}
 
-				// Persist
-				await supabase
-					.from('friends')
-					.update({
-						balance: newBalance,
-						group_breakdown: newBreakdown,
-					})
-					.eq('id', friendId);
+				// Add to updates array for atomic RPC
+				friendUpdates.push({
+					friend_id: friendId,
+					balance: newBalance,
+					group_breakdown: newBreakdown,
+				});
 			});
 
 			// Persist Group data (user_balances and simplified_debts)
@@ -1017,7 +1058,24 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 				})
 				.eq('id', groupId);
 
-			await Promise.all(updates);
+			// Persist friend updates atomically via RPC
+			if (friendUpdates.length > 0) {
+				const { error: rpcError } = await supabase.rpc('update_friend_balances_atomic', {
+					p_updates: friendUpdates,
+				});
+
+				if (rpcError) {
+					console.error('[RECALC_GROUP_RPC_ERROR]', {
+						groupId,
+						updateCount: friendUpdates.length,
+						error: rpcError.message,
+					});
+					throw new Error(`[RECALC_GROUP_RPC_ERROR] Atomic update failed: ${rpcError.message}`);
+				}
+
+				console.log(`[RECALC_GROUP_RPC_SUCCESS] Applied ${friendUpdates.length} friend updates atomically`);
+			}
+
 			console.log(`[RECALC_SCOPE_SUCCESS] { groupId: '${groupId}' }`);
 			return;
 		}
@@ -1030,7 +1088,15 @@ export const recalculateGroupBalances = async (supabase: SupabaseClient, groupId
 	}
 };
 
-// === NEW: Scoped Recalculation for 2-Person Personal Expenses ===
+// =============================================================================
+// DEPRECATED: 2-Person Personal Expense Recalculation
+// =============================================================================
+// This function assumes EXACTLY 2 participants and is being replaced by
+// recalculateUserPersonalLedger which supports N-person personal expenses.
+//
+// STATUS: UNUSED - All call sites now use recalculateUserPersonalLedger
+// CLEANUP: This function will be deleted in a future cleanup prompt
+// =============================================================================
 // INVARIANT: This function is PURE MATH ONLY
 // - No global fallback
 // - No implicit friend creation
@@ -1042,6 +1108,11 @@ export const recalculatePersonalExpense = async (
 ) => {
 	// Guard: Both IDs must be valid - THROW, don't fallback
 	if (!userId1 || !userId2 || userId1 === userId2) {
+		console.error('[RECALC_PERSONAL_FAILURE]', {
+			reason: 'invalid_user_ids',
+			userId1,
+			userId2,
+		});
 		throw new Error(
 			`[RECALC_PERSONAL_ERROR] Invalid user IDs for personal expense recalculation: userId1=${userId1}, userId2=${userId2}`
 		);
@@ -1061,6 +1132,11 @@ export const recalculatePersonalExpense = async (
 
 	// INVARIANT: Friend records MUST exist - no implicit creation
 	if (!friendsData || friendsData.length === 0) {
+		console.error('[RECALC_PERSONAL_FAILURE]', {
+			reason: 'no_friend_records',
+			userId1,
+			userId2,
+		});
 		throw new Error(
 			`[RECALC_PERSONAL_ERROR] No friend records found between users ${userId1.slice(-8)} and ${userId2.slice(-8)}. ` +
 			`Friend records must be created before creating personal expenses.`
@@ -1129,6 +1205,13 @@ export const recalculatePersonalExpense = async (
 	// INVARIANT: No implicit friend creation in recalculation
 	// If missingLinks exist, it means data is corrupted - throw error
 	if (result.missingLinks.size > 0) {
+		console.error('[RECALC_PERSONAL_FAILURE]', {
+			reason: 'missing_friend_links',
+			userId1,
+			userId2,
+			missingLinks: Array.from(result.missingLinks),
+			scopedExpenseIds: expensesData.map((e: any) => e.id),
+		});
 		throw new Error(
 			`[RECALC_PERSONAL_ERROR] Missing friend links detected during recalculation: ${Array.from(result.missingLinks).join(', ')}. ` +
 			`This indicates data corruption. Friend records must exist before expense creation.`
@@ -1164,4 +1247,281 @@ export const recalculatePersonalExpense = async (
 	await Promise.all(updatePromises);
 
 	console.log(`[RECALC_PERSONAL_SUCCESS] Updated ${friendBalances.size} friend records`);
+};
+
+// =============================================================================
+// NEW: N-Person Personal Ledger Recalculation
+// =============================================================================
+// This function replaces recalculatePersonalExpense and supports N-person
+// personal expenses (N >= 2). It uses the same algorithm as group recalculation.
+//
+// SCOPE: Recalculates all personal expenses involving the given userId
+// ALGORITHM: Same ledger replay as recalculateGroupBalances
+// WRITES: Non-atomic (same pattern as current implementation)
+// =============================================================================
+export const recalculateUserPersonalLedger = async (
+	supabase: SupabaseClient,
+	userId: string
+): Promise<void> => {
+	// Guard: userId must be valid
+	if (!userId) {
+		console.error('[RECALC_PERSONAL_N_FAILURE]', {
+			reason: 'invalid_user_id',
+			userId,
+		});
+		throw new Error(`[RECALC_PERSONAL_N_ERROR] userId is required for personal ledger recalculation`);
+	}
+
+	console.log(`[RECALC_PERSONAL_N_START] { userId: '${userId.slice(-8)}' }`);
+
+	// ==========================================================================
+	// STEP 1: Fetch personal expenses involving this user (SCOPED)
+	// ==========================================================================
+	// Fetch expenses where user is payer OR user is in splits
+	// We need to fetch expenses where:
+	// - group_id IS NULL
+	// - deleted = false
+	// - payer_user_id = userId OR expense has a split with user_id = userId
+
+	// First, get expense IDs where user is in splits (OPTIMIZATION B: filter to personal only via join)
+	// This join excludes group expenses at the DB level, reducing fetched rows
+	const { data: userSplitExpenseIds, error: splitError } = await supabase
+		.from('expense_splits')
+		.select('expense_id, expenses!inner(group_id, deleted)')
+		.eq('user_id', userId)
+		.is('expenses.group_id', null)
+		.eq('expenses.deleted', false);
+
+	if (splitError) throw splitError;
+
+	const splitExpenseIds = (userSplitExpenseIds || []).map((s: any) => s.expense_id);
+
+	// Fetch personal expenses where user is payer
+	const { data: payerExpenses, error: payerError } = await supabase
+		.from('expenses')
+		.select(
+			'id, amount, payer_user_id, payer_id, group_id, description, splits:expense_splits(user_id, friend_id, amount, paid_amount, paid)'
+		)
+		.is('group_id', null)
+		.eq('deleted', false)
+		.eq('payer_user_id', userId);
+
+	if (payerError) throw payerError;
+
+	// Fetch personal expenses where user is in splits
+	let splitExpenses: any[] = [];
+	if (splitExpenseIds.length > 0) {
+		const { data: splitExp, error: splitExpError } = await supabase
+			.from('expenses')
+			.select(
+				'id, amount, payer_user_id, payer_id, group_id, description, splits:expense_splits(user_id, friend_id, amount, paid_amount, paid)'
+			)
+			.is('group_id', null)
+			.eq('deleted', false)
+			.in('id', splitExpenseIds);
+
+		if (splitExpError) throw splitExpError;
+		splitExpenses = splitExp || [];
+	}
+
+	// Merge and deduplicate expenses
+	const expenseMap = new Map<string, any>();
+	(payerExpenses || []).forEach((e: any) => expenseMap.set(e.id, e));
+	splitExpenses.forEach((e: any) => expenseMap.set(e.id, e));
+	const expensesData = Array.from(expenseMap.values());
+
+	console.log(`[RECALC_PERSONAL_N] Found ${expensesData.length} personal expenses for user`);
+
+	// ==========================================================================
+	// STEP 2: Derive participant set (N-PERSON)
+	// ==========================================================================
+	const participants = new Set<string>();
+
+	expensesData.forEach((expense: any) => {
+		// Add payer
+		if (expense.payer_user_id) {
+			participants.add(expense.payer_user_id);
+		}
+		// Add split participants
+		expense.splits?.forEach((split: any) => {
+			if (split.user_id) {
+				participants.add(split.user_id);
+			}
+		});
+	});
+
+	console.log(`[RECALC_PERSONAL_N] Derived ${participants.size} participants:`, 
+		Array.from(participants).map(p => p.slice(-8)));
+
+	// If no participants, nothing to recalculate
+	if (participants.size === 0) {
+		console.log(`[RECALC_PERSONAL_N_COMPLETE] No participants found, nothing to recalculate`);
+		return;
+	}
+
+	// ==========================================================================
+	// STEP 3: Fetch required friend records
+	// ==========================================================================
+	// Fetch friend records where BOTH owner_id AND linked_user_id are in participants
+	const participantArray = Array.from(participants);
+
+	const { data: allParticipantFriends, error: friendsError } = await supabase
+		.from('friends')
+		.select('id, owner_id, linked_user_id, group_breakdown, balance')
+		.in('owner_id', participantArray)
+		.in('linked_user_id', participantArray);
+
+	if (friendsError) throw friendsError;
+
+	// FIX BUG 2: Filter to ONLY friend records where userId is a party
+	// This prevents updating unrelated friend records (e.g., B↔C when recalculating for A)
+	const friendsData = (allParticipantFriends || []).filter(
+		(f: any) => f.owner_id === userId || f.linked_user_id === userId
+	);
+
+	console.log(`[RECALC_PERSONAL_N] Fetched ${allParticipantFriends?.length || 0} participant friends, filtered to ${friendsData.length} user-involved friends`);
+
+	// ==========================================================================
+	// STEP 4: Fetch personal transactions involving this user
+	// ==========================================================================
+	// FIX BUG 1: Get friend IDs where userId is OWNER or LINKED (not just owned)
+	// This ensures we fetch transactions created by OTHER users that affect our balances
+	const userInvolvedFriendIds = friendsData.map((f: any) => f.id);
+
+	let transactionsData: any[] = [];
+	if (userInvolvedFriendIds.length > 0) {
+		const { data: txData, error: txError } = await supabase
+			.from('transactions')
+			.select('type, amount, group_id, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
+			.is('group_id', null)
+			.in('type', ['paid', 'received'])
+			.eq('deleted', false)
+			.in('friend_id', userInvolvedFriendIds);
+
+		if (txError) throw txError;
+		transactionsData = txData || [];
+	}
+
+	console.log(`[RECALC_PERSONAL_N] Found ${transactionsData.length} personal transactions on user-involved friends`);
+
+	// ==========================================================================
+	// STEP 5: Run ledger replay using calculateBalancesForData
+	// ==========================================================================
+	const result = calculateBalancesForData(friendsData, expensesData, transactionsData);
+
+	// Check for missing links (indicates data corruption)
+	if (result.missingLinks.size > 0) {
+		console.error('[RECALC_PERSONAL_N_FAILURE]', {
+			reason: 'missing_friend_links',
+			userId,
+			missingLinks: Array.from(result.missingLinks),
+			participantCount: participants.size,
+		});
+		throw new Error(
+			`[RECALC_PERSONAL_N_ERROR] Missing friend links detected: ${Array.from(result.missingLinks).join(', ')}. ` +
+			`Friend records must exist before expense creation.`
+		);
+	}
+
+	const { friendBalances } = result;
+
+	// ==========================================================================
+	// STEP 6: Verify zero-sum invariant
+	// ==========================================================================
+	// For personal expenses scoped to one user, the sum should equal their net position
+	// But across ALL friend records updated, the bilateral pairs should sum to zero
+	let netSum = 0;
+	friendBalances.forEach((val) => (netSum += val));
+
+	console.log(`[RECALC_PERSONAL_N_AUDIT] Net Sum Check: ${netSum.toFixed(4)}`);
+	
+	// Note: For scoped personal recalc, we don't enforce zero-sum strictly because
+	// we're only looking at one user's perspective. The bilateral pairs will balance.
+
+	// ==========================================================================
+	// STEP 7: Write results to database (ATOMIC via RPC)
+	// ==========================================================================
+	
+	const friendUpdates: Array<{ friend_id: string; balance: number; group_breakdown: any[] }> = [];
+
+	Array.from(friendBalances.entries()).forEach(([friendId, balance]) => {
+		const roundedPersonalBalance = Math.round(balance * 100) / 100;
+
+		// Get existing breakdown
+		const existingFriend = (friendsData || []).find((f: any) => f.id === friendId);
+		const existingBreakdown = existingFriend?.group_breakdown || [];
+
+		// Keep only group entries (filter out personal entries - groupId is null or 'personal')
+		const groupOnlyBreakdown = existingBreakdown.filter(
+			(b: any) => b.groupId && b.groupId !== 'personal'
+		);
+
+		// Calculate group breakdown sum for logging
+		const groupBreakdownSum = groupOnlyBreakdown.reduce(
+			(acc: number, b: any) => acc + (b.amount || 0), 
+			0
+		);
+
+		// Build new breakdown: group entries + personal entry (if non-zero)
+		let newBreakdown = [...groupOnlyBreakdown];
+		
+		// Add personal entry if personal balance is non-zero
+		if (Math.abs(roundedPersonalBalance) > 0.01) {
+			newBreakdown.push({
+				groupId: null,
+				name: 'Personal Expenses',
+				amount: roundedPersonalBalance,
+				rawAmount: roundedPersonalBalance, // No simplification for personal
+			});
+		}
+
+		// INVARIANT: balance = sum(breakdown.amount)
+		const finalBalance = newBreakdown.reduce(
+			(acc: number, b: any) => acc + (b.amount || 0),
+			0
+		);
+		const roundedFinalBalance = Math.round(finalBalance * 100) / 100;
+
+		const oldBalance = existingFriend?.balance || 0;
+		const balanceChanged = Math.abs(roundedFinalBalance - oldBalance) > 0.001;
+		const oldBreakdownJSON = JSON.stringify(existingBreakdown);
+		const newBreakdownJSON = JSON.stringify(newBreakdown);
+		const breakdownChanged = oldBreakdownJSON !== newBreakdownJSON;
+		
+		// Only update if something changed
+		if (!balanceChanged && !breakdownChanged) {
+			return; // SKIP - no changes for this friend
+		}
+
+		console.log(`[RECALC_PERSONAL_N] Updating friend ${friendId.slice(-8)}: ` +
+			`balance ${oldBalance} → ${roundedFinalBalance} (personal: ${roundedPersonalBalance}, groups: ${groupBreakdownSum})`);
+
+		// Add to updates array for atomic RPC
+		friendUpdates.push({
+			friend_id: friendId,
+			balance: roundedFinalBalance,
+			group_breakdown: newBreakdown,
+		});
+	});
+
+	// Persist friend updates atomically via RPC
+	if (friendUpdates.length > 0) {
+		const { error: rpcError } = await supabase.rpc('update_friend_balances_atomic', {
+			p_updates: friendUpdates,
+		});
+
+		if (rpcError) {
+			console.error('[RECALC_PERSONAL_RPC_ERROR]', {
+				userId,
+				updateCount: friendUpdates.length,
+				error: rpcError.message,
+			});
+			throw new Error(`[RECALC_PERSONAL_RPC_ERROR] Atomic update failed: ${rpcError.message}`);
+		}
+
+		console.log(`[RECALC_PERSONAL_RPC_SUCCESS] Applied ${friendUpdates.length} friend updates atomically`);
+	}
+
+	console.log(`[RECALC_PERSONAL_N_SUCCESS] Recalculated personal ledger for user ${userId.slice(-8)}, ` +
+		`updated ${friendUpdates.length} friend records`);
 };

@@ -79,6 +79,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] }) // Balances update
+      queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
     }
   })
 
@@ -110,9 +111,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       return api.post('/api/transactions/settle-up', data);
     },
     onSuccess: () => {
-      console.log('[FRIEND_BALANCE_DIAG] Settle-up SUCCESS - Invalidating queries: transactions, friends');
+      console.log('[FRIEND_BALANCE_DIAG] Settle-up SUCCESS - Invalidating queries: transactions, friends, groups');
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
     }
   })
 
@@ -121,6 +123,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
     },
     // Optimistic Update could be added here, but SWR style revalidation is safer for balances
   })
@@ -130,18 +133,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ['transactions'] })
           queryClient.invalidateQueries({ queryKey: ['friends'] })
+          queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
       }
   })
 
   const deleteExpenseMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/expenses/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expenses'] }) // Refetch to see deleted state if API actually deletes, or we assume soft delete
-      // Note: If API does soft delete, it returns 200/204.
-      // We might need to handle "soft delete" visibility local state if backend deletes record 
-      // User requested "Soft Delete" logic earlier. Backend logic for DELETE /api/expenses/:id does soft delete?
-      // Let's assume standard behavior: refetch to get latest state
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
       queryClient.invalidateQueries({ queryKey: ['friends'] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
     }
   })
 
@@ -150,6 +151,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ['expenses'] })
           queryClient.invalidateQueries({ queryKey: ['friends'] })
+          queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
       }
   })
 
@@ -159,6 +161,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: ['expenses'] })
           queryClient.invalidateQueries({ queryKey: ['friends'] })
+          queryClient.invalidateQueries({ queryKey: ['groups'] })  // Group balances update
       }
   })
 

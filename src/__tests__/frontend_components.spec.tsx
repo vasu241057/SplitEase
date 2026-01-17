@@ -182,9 +182,10 @@ describe('Phase 2 Frontend Component Coverage', () => {
             );
 
             expect(screen.getByText('Dinner')).toBeInTheDocument();
-            expect(screen.getByText('You paid')).toBeInTheDocument();
+            // New UI: payer text includes amount like "You paid ₹100"
+            expect(screen.getByText(/You paid/)).toBeInTheDocument();
             expect(screen.getByText(/You lent/)).toBeInTheDocument();
-            expect(screen.getAllByText(/₹50.00/).length).toBeGreaterThan(0);
+            expect(screen.getAllByText(/₹50/).length).toBeGreaterThan(0);
         });
 
         it('displays "You borrowed" when friend paid for me (Personal Expense)', () => {
@@ -220,9 +221,10 @@ describe('Phase 2 Frontend Component Coverage', () => {
             );
 
             expect(screen.getByText('Uber')).toBeInTheDocument();
-            expect(screen.getByText('They paid')).toBeInTheDocument();
+            // New UI: payer text shows friend name with amount like "Alice paid ₹100"
+            expect(screen.getByText(/Alice paid/)).toBeInTheDocument();
             expect(screen.getByText(/You borrowed/)).toBeInTheDocument();
-            expect(screen.getAllByText(/₹50.00/).length).toBeGreaterThan(0);
+            expect(screen.getAllByText(/₹50/).length).toBeGreaterThan(0);
         });
     });
 });

@@ -34,7 +34,16 @@ export function SettleUp() {
   // Initialize amount from Context if not passed in state
   useEffect(() => {
       if (!amount && friendId && selectedGroup) {
-          const friend = friends.find(f => f.id === friendId);
+          // FIX: friendId from GroupDetail may be member.id, not friend.id
+          // First find the member to get their userId, then find the friend
+          const member = selectedGroup.members.find(m => m.id === friendId);
+          const memberUserId = member?.userId;
+          
+          // Try to find friend by linked_user_id (if we have memberUserId) or by id (fallback)
+          const friend = friends.find(f => 
+              (memberUserId && f.linked_user_id === memberUserId) || f.id === friendId
+          );
+          
           if (friend && friend.group_breakdown) {
               const breakdown = friend.group_breakdown.find(b => b.groupId === groupId);
               if (breakdown) {

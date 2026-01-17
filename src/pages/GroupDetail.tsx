@@ -10,6 +10,7 @@ import { cn } from "../utils/cn"
 import { api } from "../utils/api"
 import { useGroupBalance } from "../hooks/useGroupBalance"
 import { matchesMember, matchesDebtParticipant, type GroupMember } from "../utils/groupBalanceUtils"
+import { groupByMonth } from "../utils/dateUtils"
 
 export function GroupDetail() {
   const { id } = useParams<{ id: string }>()
@@ -88,26 +89,7 @@ export function GroupDetail() {
 
   // Group activity by month (YYYY-MM) for display headers
   const activityByMonth = useMemo(() => {
-    const grouped: Record<string, typeof groupActivity> = {};
-    
-    groupActivity.forEach(item => {
-      const monthKey = `${item.date.getFullYear()}-${String(item.date.getMonth() + 1).padStart(2, '0')}`;
-      if (!grouped[monthKey]) {
-        grouped[monthKey] = [];
-      }
-      grouped[monthKey].push(item);
-    });
-    
-    // Sort months in descending order
-    const sortedMonths = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
-    
-    return sortedMonths.map(monthKey => ({
-      monthKey,
-      label: new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(
-        new Date(parseInt(monthKey.split('-')[0]), parseInt(monthKey.split('-')[1]) - 1)
-      ),
-      items: grouped[monthKey]
-    }));
+    return groupByMonth(groupActivity, item => item.date);
   }, [groupActivity]);
 
   // Derived Simplified Debts (BACKEND DRIVEN)
@@ -155,7 +137,8 @@ export function GroupDetail() {
            return group.members.map(member => {
                 if (member.id === currentUser.id || member.userId === currentUser.id) return null;
 
-                const friend = friends.find(f => f.id === member.id);
+                // FIX: Use linked_user_id to match member.userId (both are auth user IDs)
+                const friend = friends.find(f => f.linked_user_id === member.userId);
                 let balance = 0;
                 
                 if (friend && friend.group_breakdown) {
@@ -188,13 +171,6 @@ export function GroupDetail() {
   }
 
   // groupExpenses/Transactions defined above
-
-  // Helper to format date as "20 Dec"
-  const formatShortDate = (date: Date) => {
-    const day = date.getDate();
-    const month = date.toLocaleDateString('en-US', { month: 'short' });
-    return `${day} ${month}`;
-  };
 
 
   const getMemberName = (id: string) => {
@@ -252,7 +228,51 @@ export function GroupDetail() {
          simplifiedDebts: group.simplified_debts
      });
 
-     // Log Friend Breakdowns relevant to this group
+     // [NEW] Log all members with their IDs
+     console.log('[DISCREPANCY_DEBUG] Group Members:', group.members.map(m => ({
+         memberId: m.id,
+         userId: m.userId,
+         name: m.name
+     })));
+
+     // [NEW] Log all friends with their IDs and group_breakdown
+     console.log('[DISCREPANCY_DEBUG] All Friends (truncated):', friends.slice(0, 10).map(f => ({
+         friendId: f.id,
+         linkedUserId: f.linked_user_id,
+         name: f.name,
+         hasGroupBreakdown: !!f.group_breakdown,
+         groupBreakdownCount: f.group_breakdown?.length || 0,
+         groupBreakdown: f.group_breakdown?.map(b => ({
+             groupId: b.groupId,
+             name: b.name,
+             amount: b.amount
+         }))
+     })));
+
+     // [NEW] Trace the exact lookup for each member
+     console.log('[DISCREPANCY_DEBUG] Member → Friend Lookup Trace:');
+     group.members.forEach(m => {
+         const friendByMemberId = friends.find(f => f.id === m.id);
+         const friendByUserId = friends.find(f => f.id === m.userId);
+         const friendByLinkedUserId = friends.find(f => f.linked_user_id === m.userId);
+         
+         console.log(`  Member: ${m.name} (id: ${m.id}, userId: ${m.userId})`, {
+             matchBy_fId_eq_mId: friendByMemberId ? {
+                 friendId: friendByMemberId.id,
+                 breakdown: friendByMemberId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
+             } : 'NO_MATCH',
+             matchBy_fId_eq_mUserId: friendByUserId ? {
+                 friendId: friendByUserId.id,
+                 breakdown: friendByUserId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
+             } : 'NO_MATCH',
+             matchBy_fLinkedUserId_eq_mUserId: friendByLinkedUserId ? {
+                 friendId: friendByLinkedUserId.id,
+                 breakdown: friendByLinkedUserId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
+             } : 'NO_MATCH'
+         });
+     });
+
+     // Log Friend Breakdowns relevant to this group (original)
      const memberBreakdowns = group.members.map(m => {
         const friend = friends.find(f => f.id === m.id);
         const breakdown = friend?.group_breakdown?.find(b => b.groupId === group.id);
@@ -262,7 +282,7 @@ export function GroupDetail() {
             breakdown: breakdown || 'MISSING'
         };
      });
-     console.log('[DISCREPANCY_DEBUG] Friend Breakdowns:', JSON.stringify(memberBreakdowns, null, 2));
+     console.log('[DISCREPANCY_DEBUG] Friend Breakdowns (by f.id === m.id):', JSON.stringify(memberBreakdowns, null, 2));
 
      // Audit Expenses
      console.log('[DISCREPANCY_DEBUG] Auditing Group Expenses...');
@@ -300,6 +320,15 @@ export function GroupDetail() {
                 </span>
             )}
           </p>
+          {/* Group Total Display */}
+          {group.currentUserBalance !== undefined && Math.abs(group.currentUserBalance) >= 0.01 && (
+            <p className={cn(
+              "text-sm font-medium mt-0.5",
+              group.currentUserBalance > 0 ? "text-green-600" : "text-red-600"
+            )}>
+              {group.currentUserBalance > 0 ? "you get back" : "you owe"} ₹{Math.abs(group.currentUserBalance).toFixed(2)}
+            </p>
+          )}
         </div>
 
         <Button
@@ -404,76 +433,92 @@ export function GroupDetail() {
                     {items.map((item) => {
                 if (item.type === 'expense') {
                   const expense = item.data;
+                  
+                  // Find the current user's member record in this group
+                  const myMemberRecord = group.members.find(
+                    (m: any) => m.id === currentUser.id || m.userId === currentUser.id
+                  );
+                  
+                  const meRef: GroupMember = { 
+                    id: myMemberRecord?.id || currentUser.id, 
+                    userId: currentUser.id 
+                  };
+
+                  // Calculate payers info
+                  const payers = expense.splits.filter((s: any) => (s.paidAmount || 0) > 0);
+                  const isMultiPayer = payers.length > 1;
+                  
+                  // Payer text logic
+                  let payerText = "";
+                  if (isMultiPayer) {
+                    // Multi-payer: Always show count + total (perspective-neutral)
+                    payerText = `${payers.length} people paid ₹${expense.amount}`;
+                  } else if (payers.length === 1) {
+                    const singlePayer = payers[0];
+                    if (matchesMember(singlePayer.userId, meRef)) {
+                      payerText = `You paid ₹${singlePayer.paidAmount}`;
+                    } else {
+                      payerText = `${getMemberName(singlePayer.userId)} paid ₹${singlePayer.paidAmount}`;
+                    }
+                  } else {
+                    // Fallback to payerId if no paidAmount in splits
+                    if (matchesMember(expense.payerId, meRef)) {
+                      payerText = `You paid ₹${expense.amount}`;
+                    } else {
+                      payerText = `${getMemberName(expense.payerId)} paid ₹${expense.amount}`;
+                    }
+                  }
+
+                  // Calculate net effect on current user
+                  const mySplit = expense.splits.find((s: any) => matchesMember(s.userId, meRef));
+                  const myPaidAmount = mySplit?.paidAmount || 0;
+                  const myOwedAmount = mySplit?.amount || 0;
+                  const netEffect = myPaidAmount - myOwedAmount;
+                  
+                  // Extract date parts
+                  const expenseDate = item.date;
+                  const monthShort = expenseDate.toLocaleDateString('en-US', { month: 'short' });
+                  const dayNum = expenseDate.getDate();
+
                   return (
                     <Card 
                       key={expense.id} 
                       className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
                       onClick={() => navigate(`/expenses/${expense.id}`)}
                     >
-                      <div className="flex items-center p-4 gap-4">
-                        <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
-                          <Banknote className="h-5 w-5" />
+                      <div className="flex items-center py-4 pl-1 pr-2 gap-3">
+                        {/* Left: Date + Icon grouped */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <div className="flex flex-col items-center justify-center w-10 text-center">
+                            <span className="text-xs font-medium text-muted-foreground uppercase leading-tight">{monthShort}</span>
+                            <span className="text-lg font-bold leading-tight">{dayNum}</span>
+                          </div>
+                          <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                            <Banknote className="h-5 w-5" />
+                          </div>
                         </div>
+                        
+                        {/* Middle: Description + Payer */}
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">
-                            {expense.description}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatShortDate(item.date)} •{" "}
-                            {(() => {
-                              // Find the current user's member record in this group
-                              // This is needed because split.userId may contain the friend_id (how others see us)
-                              // rather than the auth user_id
-                              const myMemberRecord = group.members.find(
-                                (m: any) => m.id === currentUser.id || m.userId === currentUser.id
-                              );
-                              
-                              // Create a GroupMember ref with BOTH IDs for proper matching:
-                              // - id: friend_id (how others see us in the group)
-                              // - userId: auth user_id (our actual user ID)
-                              const meRef: GroupMember = { 
-                                id: myMemberRecord?.id || currentUser.id, 
-                                userId: currentUser.id 
-                              };
-
-                              // Check if user is involved in this expense using proper member matching
-                              // BUG FIX: Previously used s.userId === currentUser.id which fails when
-                              // split.userId is a friend_id and currentUser.id is the auth user_id
-                              const isUserPayer = matchesMember(expense.payerId, meRef) ||
-                                expense.splits.some(s => matchesMember(s.userId, meRef) && (s.paidAmount || 0) > 0);
-                              const isUserInSplits = expense.splits.some(s => matchesMember(s.userId, meRef));
-                              const isUserInvolved = isUserPayer || isUserInSplits;
-
-                              // Show normal payer summary
-                              // Check for multi-payer scenario
-                              const payers = expense.splits.filter(s => (s.paidAmount || 0) > 0);
-                              const isMultiPayer = payers.length > 1;
-
-                              // Determine what text will be shown
-                              let resolvedSummaryText = "";
-
-                              if (!isUserInvolved) {
-                                resolvedSummaryText = "You are not involved";
-                              } else if (isMultiPayer) {
-                                // Use matchesMember for proper ID comparison
-                                const userPaid = payers.find(p => matchesMember(p.userId, meRef));
-                                if (userPaid) {
-                                  resolvedSummaryText = `You paid ₹${userPaid.paidAmount}`;
-                                } else {
-                                  resolvedSummaryText = `${payers.length} people paid`;
-                                }
-                              } else {
-                                resolvedSummaryText = matchesMember(expense.payerId, meRef)
-                                  ? "You paid"
-                                  : `${getMemberName(expense.payerId)} paid`;
-                              }
-
-                              return resolvedSummaryText;
-                            })()}
-                          </p>
+                          <p className="text-base font-medium truncate">{expense.description}</p>
+                          <p className="text-sm text-muted-foreground">{payerText}</p>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold">₹{expense.amount}</p>
+                        
+                        {/* Right: Net Effect (two lines) */}
+                        <div className="text-right shrink-0">
+                          {Math.abs(netEffect) < 0.01 ? (
+                            <p className="text-sm text-muted-foreground">Settled</p>
+                          ) : netEffect > 0 ? (
+                            <>
+                              <p className="text-sm text-green-600">You lent</p>
+                              <p className="text-base font-bold text-green-600">₹{netEffect.toFixed(0)}</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm text-red-600">You borrowed</p>
+                              <p className="text-base font-bold text-red-600">₹{Math.abs(netEffect).toFixed(0)}</p>
+                            </>
+                          )}
                         </div>
                       </div>
                     </Card>
@@ -483,26 +528,28 @@ export function GroupDetail() {
                   const isFromMe = transaction.fromId === currentUser.id;
                   const isToMe = transaction.toId === currentUser.id;
                   
-                  // Determine the display text based on who is involved
+                  // Extract date parts
+                  const txDate = item.date;
+                  const monthShort = txDate.toLocaleDateString('en-US', { month: 'short' });
+                  const dayNum = txDate.getDate();
+                  
+                  // Determine display text and styling
                   let displayText: string;
-                  let amountClass: string;
-                  let amountPrefix: string;
+                  let netText: string;
+                  let netClass: string;
                   
                   if (isFromMe) {
-                    // I paid someone
                     displayText = `You paid ${getMemberName(transaction.toId)}`;
-                    amountClass = "text-red-500";
-                    amountPrefix = "-";
+                    netText = `-₹${transaction.amount}`;
+                    netClass = "text-red-600";
                   } else if (isToMe) {
-                    // Someone paid me
                     displayText = `${getMemberName(transaction.fromId)} paid you`;
-                    amountClass = "text-green-500";
-                    amountPrefix = "+";
+                    netText = `+₹${transaction.amount}`;
+                    netClass = "text-green-600";
                   } else {
-                    // Third-party transaction - I'm not involved
                     displayText = `${getMemberName(transaction.fromId)} paid ${getMemberName(transaction.toId)}`;
-                    amountClass = "text-muted-foreground";
-                    amountPrefix = "";
+                    netText = `₹${transaction.amount}`;
+                    netClass = "text-muted-foreground";
                   }
                   
                   return (
@@ -511,22 +558,27 @@ export function GroupDetail() {
                       className="overflow-hidden cursor-pointer hover:bg-muted/50 transition-colors"
                       onClick={() => navigate(`/payments/${transaction.id}`)}
                     >
-                      <div className="flex items-center p-4 gap-4">
-                        <div className="h-10 w-10 bg-green-500/10 rounded-full flex items-center justify-center text-green-600">
-                          <Wallet className="h-5 w-5" />
+                      <div className="flex items-center py-4 pl-1 pr-2 gap-3">
+                        {/* Left: Date + Icon grouped */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <div className="flex flex-col items-center justify-center w-10 text-center">
+                            <span className="text-xs font-medium text-muted-foreground uppercase leading-tight">{monthShort}</span>
+                            <span className="text-lg font-bold leading-tight">{dayNum}</span>
+                          </div>
+                          <div className="h-10 w-10 bg-green-500/10 rounded-full flex items-center justify-center text-green-600">
+                            <Wallet className="h-5 w-5" />
+                          </div>
                         </div>
+                        
+                        {/* Middle: Description */}
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">
-                            {displayText}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatShortDate(item.date)} • Settle up
-                          </p>
+                          <p className="text-base font-medium truncate">{displayText}</p>
+                          <p className="text-sm text-muted-foreground">Settle up</p>
                         </div>
-                        <div className="text-right">
-                          <p className={cn("font-bold", amountClass)}>
-                            {amountPrefix}₹{transaction.amount}
-                          </p>
+                        
+                        {/* Right: Net Effect */}
+                        <div className="text-right shrink-0">
+                          <p className={cn("text-base font-bold", netClass)}>{netText}</p>
                         </div>
                       </div>
                     </Card>
@@ -669,7 +721,8 @@ export function GroupDetail() {
                          }
                      } else {
                          // RAW PAIRWISE CALCULATION (Backend Driven)
-                         const friend = friends.find(f => f.id === member.id);
+                         // FIX: Use linked_user_id to match member.userId (both are auth user IDs)
+                         const friend = friends.find(f => f.linked_user_id === member.userId);
                          if (friend && friend.group_breakdown) {
                              const breakdown = friend.group_breakdown.find(b => b.groupId === group.id);
                              if (breakdown) {

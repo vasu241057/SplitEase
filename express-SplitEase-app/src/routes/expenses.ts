@@ -1,6 +1,6 @@
 import express from 'express';
 import { createSupabaseClient } from '../supabase';
-import { recalculateGroupBalances, recalculatePersonalExpense } from '../utils/recalculate';
+import { recalculateGroupBalances, recalculateUserPersonalLedger } from '../utils/recalculate';
 import { validateExpenseParticipantsAreMembers } from '../utils/expenseValidation';
 
 import { authMiddleware } from '../middleware/auth';
@@ -35,7 +35,15 @@ const validateUserIdOnlySplits = (splits: any[]): { valid: boolean; error?: stri
   return { valid: true };
 };
 
-// Helper to extract 2 participants from personal expense splits for scoped recalculation
+// =============================================================================
+// DEPRECATED: Helper to extract 2 participants from personal expense splits
+// =============================================================================
+// This helper assumes EXACTLY 2 participants and is no longer used.
+// All personal expense recalculation now uses recalculateUserPersonalLedger.
+//
+// STATUS: UNUSED - Kept for reference only
+// CLEANUP: This function will be deleted in a future cleanup prompt
+// =============================================================================
 const getPersonalExpenseParticipants = (splits: any[], payerId: string): [string, string] | null => {
   const participants = new Set<string>();
   
@@ -366,14 +374,8 @@ router.post('/', async (req, res) => {
     if (groupId) {
         await recalculateGroupBalances(supabase, groupId);
     } else {
-        // Personal expense: MUST have exactly 2 participants
-        const participants = getPersonalExpenseParticipants(preparedSplits, rpcParams.p_payer_user_id || creatorUserId);
-        if (!participants) {
-            // N≠2 personal expenses are NOT supported - fail fast
-            throw new Error('Personal expenses currently support exactly 2 participants');
-        }
-        // No global fallback - scoped recalc only
-        await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+        // Personal expense: N-person support via user ledger recalculation
+        await recalculateUserPersonalLedger(supabase, creatorUserId);
     }
     console.log('[BALANCE_DEBUG] RecalculateBalances completed successfully');
   } catch (e: any) {
@@ -505,14 +507,10 @@ router.put('/:id', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    // Personal expense: MUST have exactly 2 participants
-    const participants = getPersonalExpenseParticipants(preparedSplits, rpcParams.p_payer_user_id || (req as any).user.id);
-    if (!participants) {
-      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
-    }
-    // No global fallback - scoped recalc only
+    // Personal expense: N-person support via user ledger recalculation
+    const currentUserId = (req as any).user.id;
     try {
-      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+      await recalculateUserPersonalLedger(supabase, currentUserId);
     } catch (e: any) {
       return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
     }
@@ -553,23 +551,17 @@ router.delete('/:id', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    // Fetch expense splits to get participants for scoped recalculation
-    // INVARIANT: All splits have user_id after Step 5 backfill
-    const { data: expenseSplits } = await supabase
-      .from('expense_splits')
-      .select('user_id')
-      .eq('expense_id', id);
-    const participants = getPersonalExpenseParticipants(
-      expenseSplits || [],
-      expenseBefore?.payer_user_id ?? (() => { throw new Error('[INVARIANT] payer_user_id missing'); })()
-    );
-    if (!participants) {
-      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
-    }
-    // No global fallback - scoped recalc only
+    // Personal expense: N-person support via user ledger recalculation
+    const currentUserId = (req as any).user.id;
     try {
-      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+      await recalculateUserPersonalLedger(supabase, currentUserId);
     } catch (e: any) {
+      console.error('[DELETE_EXPENSE_RECALC_FAILED]', {
+        expenseId: id,
+        userId: currentUserId,
+        error: e.message,
+        stack: e.stack?.split('\n').slice(0, 5),
+      });
       return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
     }
   }
@@ -621,23 +613,17 @@ router.post('/:id/restore', async (req, res) => {
   if (groupId) {
     await recalculateGroupBalances(supabase, groupId);
   } else {
-    // Fetch expense splits to get participants for scoped recalculation
-    // INVARIANT: All splits have user_id after Step 5 backfill
-    const { data: expenseSplits } = await supabase
-      .from('expense_splits')
-      .select('user_id')
-      .eq('expense_id', id);
-    const participants = getPersonalExpenseParticipants(
-      expenseSplits || [],
-      expenseBefore?.payer_user_id ?? (() => { throw new Error('[INVARIANT] payer_user_id missing'); })()
-    );
-    if (!participants) {
-      return res.status(400).json({ error: 'Personal expenses currently support exactly 2 participants' });
-    }
-    // No global fallback - scoped recalc only
+    // Personal expense: N-person support via user ledger recalculation
+    const currentUserId = (req as any).user.id;
     try {
-      await recalculatePersonalExpense(supabase, participants[0], participants[1]);
+      await recalculateUserPersonalLedger(supabase, currentUserId);
     } catch (e: any) {
+      console.error('[RESTORE_EXPENSE_RECALC_FAILED]', {
+        expenseId: id,
+        userId: currentUserId,
+        error: e.message,
+        stack: e.stack?.split('\n').slice(0, 5),
+      });
       return res.status(500).json({ error: `Balance recalculation failed: ${e.message}` });
     }
   }
