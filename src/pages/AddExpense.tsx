@@ -68,27 +68,31 @@ export function AddExpense() {
        }
        
        // Set Friends (derive from splits who are NOT group members and NOT current user)
-       const groupMemberIds = editExp.groupId ? (groups.find(g => g.id === editExp.groupId)?.members.filter(m => m.userId !== currentUser.id).map(m => m.id) || []) : []
+       // FIX: Use m.userId (global auth user ID) NOT m.id (local friend row ID)
+       const groupMemberUserIds = editExp.groupId 
+         ? (groups.find(g => g.id === editExp.groupId)
+             ?.members
+             .filter(m => m.userId && m.userId !== currentUser.id)
+             .map(m => m.userId) as string[]
+           || []) 
+         : []
        
        const friendIds = editExp.splits
           .map((s: any) => s.userId)
           .filter((uid: string) => {
               if (uid === currentUser.id) return false
-              if (groupMemberIds.includes(uid)) return false
+              // uid is a global userId, groupMemberUserIds is now also global userIds
+              if (groupMemberUserIds.includes(uid)) return false
               
-              // Check if this UID maps to a friend (by ID or Linked User ID)
+              // Check if this UID maps to a friend (for personal expenses or mixed group+friend expenses)
               const friend = friends.find(f => f.id === uid || f.linked_user_id === uid)
               
               if (friend) {
-                  const linkedId = friend.linked_user_id
-                  // Check if EITHER the Friend ID or the Linked User ID is in the group members list
-                  const isMember = (linkedId && groupMemberIds.includes(linkedId)) || groupMemberIds.includes(friend.id)
-                  
-                  if (isMember) {
-                      return false // Is actually a member
+                  // For group expenses, also check if friend's linked_user_id is in group
+                  if (friend.linked_user_id && groupMemberUserIds.includes(friend.linked_user_id)) {
+                      return false // Is actually a group member
                   }
-                  
-                  return true // Treat as Friend
+                  return true // Treat as Friend (personal expense or external friend)
               } 
               
               return false
@@ -105,7 +109,7 @@ export function AddExpense() {
        
        const missingIds = friendIds.filter((uid: string) => 
            !foundIds.has(uid) && 
-           !groupMemberIds.includes(uid) && 
+           !groupMemberUserIds.includes(uid) && 
            uid !== currentUser.id
        );
 
@@ -125,12 +129,12 @@ export function AddExpense() {
            setSelectedFriends(friendsToSelect);
        }
        
-       // ID NORMALIZATION: Map split userIds to member IDs
-       // The expense splits use userIds that may not match group member IDs.
-       // We need to normalize them to the IDs that activeMembers will use.
+       // ID NORMALIZATION: Map split userIds to GLOBAL auth user IDs
+       // The expense splits store global userIds (profiles.id).
+       // activeMembers also uses global userIds (m.userId, f.linked_user_id).
+       // We normalize to global userIds for consistency.
        
-       // Build a mapping from split userId -> normalized member ID
-       // Priority: 1) Match group member, 2) Match friend, 3) Current user, 4) Use as-is
+       // Priority: 1) Current user, 2) Group member userId, 3) Friend linked_user_id, 4) Use as-is
        const grp = editExp.groupId ? groups.find(g => g.id === editExp.groupId) : null;
        
        const normalizeSplitUserId = (splitUserId: string): string => {
@@ -139,22 +143,21 @@ export function AddExpense() {
            return currentUser.id;
          }
          
-         // Check group members using matchesMember
+         // Check group members - return GLOBAL userId, not local member.id
          if (grp) {
            const member = grp.members.find(m => matchesMember(splitUserId, { id: m.id, userId: m.userId || undefined }));
-           if (member) {
-             return member.id; // Return the member's ID (what activeMembers uses)
+           if (member?.userId) {
+             return member.userId; // ✅ Return global userId
            }
          }
          
-         // Check friends
+         // Check friends - return GLOBAL linked_user_id, not local friend.id
          const friend = friends.find(f => f.id === splitUserId || f.linked_user_id === splitUserId);
-         if (friend) {
-           return friend.id;
+         if (friend?.linked_user_id) {
+           return friend.linked_user_id; // ✅ Return global userId
          }
          
-         // Fallback: use as-is (should not happen for valid data)
-         console.warn('[EditExpense] Could not normalize userId:', splitUserId);
+         // Fallback: assume splitUserId is already a global userId
          return splitUserId;
        };
        
@@ -304,17 +307,25 @@ export function AddExpense() {
   const getMemberDetails = (id: string) => {
     if (id === currentUser.id) return { name: "You", avatar: currentUser.avatar, isGhost: false }
     
-    // Check Selected Group first (it has rich member data)
+    // Check Selected Group - prioritize global userId match
     if (selectedGroup) {
-        const member = selectedGroup.members.find(m => m.id === id || m.userId === id)
-        if (member) return member
+        // First try matching by userId (global ID - expected for normalized state)
+        const memberByUserId = selectedGroup.members.find(m => m.userId === id)
+        if (memberByUserId) return memberByUserId
+        // Fallback to member.id for backward compatibility
+        const memberById = selectedGroup.members.find(m => m.id === id)
+        if (memberById) return memberById
     }
 
-    const friend = friends.find(f => f.id === id || f.linked_user_id === id)
-    if (friend) return friend
+    // Check friends - prioritize linked_user_id (global ID)
+    const friendByLinkedId = friends.find(f => f.linked_user_id === id)
+    if (friendByLinkedId) return friendByLinkedId
+    // Fallback to friend.id for backward compatibility
+    const friendById = friends.find(f => f.id === id)
+    if (friendById) return friendById
     
     // Check for Ghost User in selectedFriends
-    const ghost = selectedFriends.find(f => f.id === id)
+    const ghost = selectedFriends.find(f => f.id === id || f.linked_user_id === id)
     if (ghost) return ghost
 
     return { name: "Unknown", avatar: undefined, isGhost: false }
