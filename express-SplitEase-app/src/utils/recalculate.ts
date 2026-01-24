@@ -1350,13 +1350,57 @@ export const recalculateUserPersonalLedger = async (
 		});
 	});
 
-	console.log(`[RECALC_PERSONAL_N] Derived ${participants.size} participants:`, 
+	console.log(`[RECALC_PERSONAL_N] Derived ${participants.size} participants from expenses:`, 
 		Array.from(participants).map(p => p.slice(-8)));
 
-	// If no participants, nothing to recalculate
+	// ==========================================================================
+	// STEP 2.5: Fallback for Settle-Up-Only Scenarios
+	// ==========================================================================
+	// If no expenses exist but transactions might, derive participants from transactions.
+	// This ensures balances update correctly even when expenses = ∅.
 	if (participants.size === 0) {
-		console.log(`[RECALC_PERSONAL_N_COMPLETE] No participants found, nothing to recalculate`);
-		return;
+		console.log(`[RECALC_PERSONAL_N] No expense participants, checking for transaction-only scenario...`);
+		
+		// Fetch ALL friend records where this user is a party
+		// (We need to discover counterparties from transactions)
+		const { data: userFriends, error: userFriendsError } = await supabase
+			.from('friends')
+			.select('id, owner_id, linked_user_id')
+			.or(`owner_id.eq.${userId},linked_user_id.eq.${userId}`);
+		
+		if (userFriendsError) throw userFriendsError;
+		
+		const userFriendIds = (userFriends || []).map((f: any) => f.id);
+		
+		if (userFriendIds.length > 0) {
+			// Fetch personal transactions on these friend records
+			const { data: fallbackTxData, error: fallbackTxError } = await supabase
+				.from('transactions')
+				.select('type, amount, group_id, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
+				.is('group_id', null)
+				.in('type', ['paid', 'received'])
+				.eq('deleted', false)
+				.in('friend_id', userFriendIds);
+			
+			if (fallbackTxError) throw fallbackTxError;
+			
+			// Derive participants from transaction counterparties
+			(fallbackTxData || []).forEach((tx: any) => {
+				if (tx.created_by) participants.add(tx.created_by);
+				if (tx.friend?.owner_id) participants.add(tx.friend.owner_id);
+				if (tx.friend?.linked_user_id) participants.add(tx.friend.linked_user_id);
+			});
+			
+			console.log(`[RECALC_PERSONAL_N] Fallback: Found ${fallbackTxData?.length || 0} transactions, ` +
+				`derived ${participants.size} participants from transactions:`,
+				Array.from(participants).map(p => p.slice(-8)));
+		}
+		
+		// If STILL no participants (no expenses AND no transactions), truly nothing to do
+		if (participants.size === 0) {
+			console.log(`[RECALC_PERSONAL_N_COMPLETE] No participants found in expenses or transactions, nothing to recalculate`);
+			return;
+		}
 	}
 
 	// ==========================================================================
