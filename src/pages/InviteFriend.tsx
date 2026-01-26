@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Share2, Copy, Check, QrCode, Loader2, X } from 'lucide-react';
 import QRCode from 'react-qr-code';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { api } from '../utils/api';
@@ -9,6 +10,7 @@ import { QRScanner } from '../components/QRScanner';
 
 export function InviteFriend() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +75,15 @@ export function InviteFriend() {
       const res = await api.post('/api/friends/accept-invite', { inviteCode });
       if (res) {
         setScanStatus("success");
-        setScanMessage(`Successfully added friend: ${res.friend.name || 'Unknown'}`);
+        
+        // Enhanced UI: Distinguish "already friends" vs "newly added"
+        const msg = res.message === 'Already friends' 
+          ? `You are already friends with ${res.friend.name || 'Unknown'}`
+          : `Successfully added friend: ${res.friend.name || 'Unknown'}`;
+        setScanMessage(msg);
+        
+        // Fix: Invalidate friends cache so UI updates immediately
+        queryClient.invalidateQueries({ queryKey: ['friends'] });
       }
     } catch (error: any) {
       console.error("Failed to accept invite", error);

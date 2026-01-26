@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useLocation } from "react-router-dom"
 import { Moon, Sun, Globe, Info, Pencil, Check, X, Bell, Loader2, QrCode } from "lucide-react"
+import { useQueryClient } from '@tanstack/react-query'
 import { useTheme } from "../context/ThemeContext"
 import { useAuth } from "../context/AuthContext"
 import { Button } from "../components/ui/button"
@@ -32,6 +33,7 @@ export function Settings() {
   const { theme, setTheme } = useTheme()
   const { signOut, user } = useAuth()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const [isEditing, setIsEditing] = useState(false)
   const [newName, setNewName] = useState(user?.user_metadata?.full_name || "")
   const [loading, setLoading] = useState(false)
@@ -177,7 +179,15 @@ export function Settings() {
           const res = await api.post('/api/friends/accept-invite', { inviteCode });
           if (res) {
               setScanStatus("success");
-              setScanMessage(`Successfully added friend: ${res.friend.name || 'Unknown'}`);
+              
+              // Enhanced UI: Distinguish "already friends" vs "newly added"
+              const msg = res.message === 'Already friends' 
+                ? `You are already friends with ${res.friend.name || 'Unknown'}`
+                : `Successfully added friend: ${res.friend.name || 'Unknown'}`;
+              setScanMessage(msg);
+              
+              // Fix: Invalidate friends cache so UI updates immediately
+              queryClient.invalidateQueries({ queryKey: ['friends'] });
           }
       } catch (error: any) {
           console.error("Failed to accept invite", error);
