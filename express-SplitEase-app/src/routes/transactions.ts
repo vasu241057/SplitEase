@@ -275,7 +275,7 @@ router.post('/settle-up', async (req, res) => {
   // Fetch friend balance BEFORE transaction
   const { data: friendBefore } = await supabase
     .from('friends')
-    .select('id, name, balance, owner_id, linked_user_id')
+    .select('id, name, balance, owner_id, linked_user_id, group_breakdown')
     .eq('id', friendId)
     .single();
   
@@ -286,6 +286,24 @@ router.post('/settle-up', async (req, res) => {
     owner_id: friendBefore.owner_id,
     linked_user_id: friendBefore.linked_user_id
   } : 'NOT FOUND');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INPUT VALIDATION: Ensure amount is valid
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+    console.log('║ [BLOCKED] Invalid amount:', amount);
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(400).json({ error: 'Invalid amount. Must be a positive number.' });
+  }
+
+  if (typeof type !== 'string' || !['paid', 'received'].includes(type)) {
+    console.log('║ [BLOCKED] Invalid type:', type);
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(400).json({ error: 'Invalid transaction type.' });
+  }
+
+  // GROUP OVERPAY: Allowed (creates reverse balance)
+  // No validation needed - ledger replay handles all cases correctly
 
   const { data, error } = await supabase
     .from('transactions')
@@ -382,6 +400,230 @@ router.post('/settle-up', async (req, res) => {
   await notifyTransactionParticipants(req, data.id, 'settled up');
 
   res.status(201).json(formatted);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOTAL SETTLE-UP: Settle all balances (personal + groups) atomically
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/settle-up-total', async (req, res) => {
+  const { friendId, amount } = req.body;
+  const supabase = createSupabaseClient();
+  const userId = (req as any).user?.id;
+
+  console.log('╔═══════════════════════════════════════════════════════════════════');
+  console.log('║ [TOTAL SETTLE-UP] INITIATED');
+  console.log('╠═══════════════════════════════════════════════════════════════════');
+  console.log('║ User ID:', userId);
+  console.log('║ Friend ID:', friendId);
+  console.log('║ Requested Amount:', amount);
+
+  // 1️⃣ Fetch friend with breakdown
+  const { data: friend, error: friendError } = await supabase
+    .from('friends')
+    .select('id, name, balance, owner_id, linked_user_id, group_breakdown')
+    .eq('id', friendId)
+    .single();
+
+  if (friendError || !friend) {
+    console.log('║ [ERROR] Friend not found');
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(404).json({ error: 'Friend not found' });
+  }
+
+  const totalBalance = friend.balance || 0;
+  console.log('║ Friend Total Balance:', totalBalance);
+
+  // 2️⃣ HARD INVARIANT: Amount must exactly match total balance
+  if (Math.abs(amount - Math.abs(totalBalance)) > 0.01) {
+    console.log('║ [BLOCKED] Amount mismatch');
+    console.log('║ Expected:', Math.abs(totalBalance));
+    console.log('║ Received:', amount);
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(400).json({
+      error: `Total settle-up must match exact total balance (₹${Math.abs(totalBalance).toFixed(2)})`,
+      expected: Math.abs(totalBalance),
+      received: amount
+    });
+  }
+
+  // Validate breakdown exists
+  if (!Array.isArray(friend.group_breakdown)) {
+    console.log('║ [ERROR] Invalid group_breakdown data');
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(500).json({ error: 'Invalid friend data' });
+  }
+
+  // Generate batch ID for linking transactions
+  const batchId = `total_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  console.log('║ Batch ID:', batchId);
+
+  // 3️⃣ PRE-VALIDATE all breakdown entries before creating any transactions
+  const breakdown = friend.group_breakdown as Array<{ groupId: string | null; amount: number; name: string }>;
+  const validEntries: Array<{ entry: any; txAmount: number; txType: 'paid' | 'received' }> = [];
+  
+  for (const entry of breakdown) {
+    // Validate entry structure
+    if (!entry || typeof entry !== 'object') {
+      console.log('║ [WARNING] Skipping invalid entry (not an object):', entry);
+      continue;
+    }
+    
+    // Validate amount is numeric
+    if (typeof entry.amount !== 'number' || isNaN(entry.amount)) {
+      console.log('║ [WARNING] Skipping entry with invalid amount:', entry);
+      continue;
+    }
+    
+    // Skip zero balances
+    if (Math.abs(entry.amount) < 0.01) {
+      console.log(`║ Skipping ${entry.name || entry.groupId || 'personal'}: ₹0.00`);
+      continue;
+    }
+
+    const txAmount = Math.abs(entry.amount);
+    const txType = entry.amount < 0 ? 'paid' : 'received';
+    
+    validEntries.push({ entry, txAmount, txType });
+  }
+
+  console.log('║ Valid breakdown entries:', validEntries.length);
+
+  if (validEntries.length === 0) {
+    console.log('║ [ERROR] No valid entries to settle');
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(400).json({ error: 'No balances to settle' });
+  }
+
+  // 4️⃣ 🔴 CRITICAL: Create ALL transactions FIRST (atomicity via pre-creation)
+  const createdTransactions = [];
+  
+  for (const { entry, txAmount, txType } of validEntries) {
+    console.log(`║ Creating transaction for ${entry.name || 'Personal'}: ₹${txAmount} (${txType})`);
+
+    // Create transaction
+    const { data: txData, error: txError } = await supabase
+      .from('transactions')
+      .insert([{
+        friend_id: friendId,
+        amount: txAmount,
+        type: txType,
+        group_id: entry.groupId || null,
+        deleted: false,
+        date: new Date().toISOString(),
+        created_by: userId,
+        is_part_of_total_settlement: true,
+        settlement_batch_id: batchId
+      }])
+      .select('*, friend:friends(linked_user_id)')
+      .single();
+
+    if (txError) {
+      console.log('║ [ERROR] Transaction creation failed:', txError.message);
+      console.log('║ Entry:', entry.name || entry.groupId);
+      console.log('╚═══════════════════════════════════════════════════════════════════');
+      
+      // TODO: In production, should rollback already-created transactions
+      // For now, return error immediately to prevent recalculation
+      return res.status(500).json({ 
+        error: `Failed to create transaction for ${entry.name || 'personal'}`,
+        details: txError.message,
+        partialTransactions: createdTransactions.length
+      });
+    }
+
+    createdTransactions.push({ ...txData, groupId: entry.groupId });
+  }
+
+  console.log('║ ✅ All transactions created successfully:', createdTransactions.length);
+
+  // 5️⃣ ONLY AFTER all transactions succeed → Recalculate ledgers
+  console.log('║ Recalculating ledgers...');
+  
+  // Collect unique ledgers to recalculate
+  const groupsToRecalc = new Set<string>();
+  let needPersonalRecalc = false;
+  
+  for (const tx of createdTransactions) {
+    if (tx.groupId) {
+      groupsToRecalc.add(tx.groupId);
+    } else {
+      needPersonalRecalc = true;
+    }
+  }
+  
+  // Recalculate each unique ledger
+  try {
+    for (const groupId of groupsToRecalc) {
+      console.log(`║ Recalculating group ${groupId}`);
+      await recalculateGroupBalances(supabase, groupId);
+    }
+    
+    if (needPersonalRecalc) {
+      console.log(`║ Recalculating personal ledger for user ${userId}`);
+      await recalculateUserPersonalLedger(supabase, userId);
+    }
+  } catch (recalcError: any) {
+    console.log('║ [ERROR] Recalculation failed:', recalcError.message);
+    console.log('║ ⚠️  WARNING: Transactions were created but ledger may be inconsistent');
+    console.log('╚═══════════════════════════════════════════════════════════════════');
+    return res.status(500).json({ 
+      error: 'Ledger recalculation failed after creating transactions',
+      details: recalcError.message,
+      warning: 'Transactions were created. Please refresh balances.'
+    });
+  }
+
+  console.log('║ Created', createdTransactions.length, 'transactions');
+
+  // 5️⃣ Verify post-condition: balance should be zero
+  const { data: friendAfter } = await supabase
+    .from('friends')
+    .select('balance')
+    .eq('id', friendId)
+    .single();
+
+  const finalBalance = friendAfter?.balance || 0;
+  console.log('║ Final Balance:', finalBalance);
+
+  if (Math.abs(finalBalance) > 0.01) {
+    console.log('║ [WARNING] Post-condition failed: balance not zero!');
+    console.log('║ Expected: 0.00');
+    console.log('║ Actual:', finalBalance);
+    // Don't fail the request, but log prominently
+  }
+
+  console.log('╠───────────────────────────────────────────────────────────────────');
+  console.log('║ TOTAL SETTLE-UP COMPLETE');
+  console.log('║ Transactions created:', createdTransactions.length);
+  console.log('║ Batch ID:', batchId);
+  console.log('╚═══════════════════════════════════════════════════════════════════');
+
+  // System Comment for each transaction
+  for (const tx of createdTransactions) {
+    await supabase.from('comments').insert({
+      entity_type: 'payment',
+      entity_id: tx.id,
+      user_id: userId,
+      content: 'settled up (total settlement)',
+      is_system: true
+    });
+  }
+
+  // Notify participants
+  await notifyTransactionParticipants(req, createdTransactions[0].id, 'settled everything');
+
+  res.status(201).json({
+    success: true,
+    batchId,
+    transactionCount: createdTransactions.length,
+    finalBalance,
+    transactions: createdTransactions.map(tx => ({
+      id: tx.id,
+      amount: tx.amount,
+      type: tx.type,
+      groupId: tx.group_id
+    }))
+  });
 });
 
 router.delete('/:id', async (req, res) => {

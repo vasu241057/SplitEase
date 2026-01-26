@@ -245,20 +245,60 @@ export function FriendDetail() {
             </div>
         )}
 
-        <div className="flex justify-center gap-4 pt-2">
-          <Button 
-            className="w-full max-w-xs"
-            onClick={() => navigate("/settle-up", { 
-              state: { 
-                friendId: friend.id,
-                defaultDirection: friend.balance > 0 ? "receiving" : "paying",
-                amount: Math.abs(friend.balance).toFixed(2)
-              } 
-            })}
-          >
-            Settle Up
-          </Button>
-        </div>
+        {/* Settlement Actions */}
+        {(() => {
+          // Extract personal balance (groupId === null)
+          const personalBalance = friend.group_breakdown
+            ?.find(b => b.groupId === null)?.amount || 0;
+          const hasPersonalBalance = Math.abs(personalBalance) >= 0.01;
+          const hasTotalBalance = Math.abs(friend.balance) >= 0.01;
+          
+          return (
+            <div className="flex flex-col gap-3 pt-2">
+              {/* Personal Settle-Up */}
+              <div className="flex flex-col items-center gap-2">
+                <Button 
+                  className="w-full max-w-xs"
+                  variant="outline"
+                  disabled={!hasPersonalBalance}
+                  onClick={() => navigate("/settle-up", { 
+                    state: { 
+                      friendId: friend.id,
+                      defaultDirection: personalBalance > 0 ? "receiving" : "paying",
+                      amount: Math.abs(personalBalance).toFixed(2)
+                    } 
+                  })}
+                >
+                  Settle Personal
+                </Button>
+                {!hasPersonalBalance && (
+                  <p className="text-xs text-muted-foreground">
+                    {friend.balance !== 0 ? "No personal balance — settle in groups" : "All settled"}
+                  </p>
+                )}
+              </div>
+
+              {/* Total Settle-Up */}
+              {hasTotalBalance && (
+                <div className="flex flex-col items-center gap-2">
+                  <Button 
+                    className="w-full max-w-xs"
+                    onClick={() => navigate("/settle-up-total", { 
+                      state: { 
+                        friendId: friend.id
+                      } 
+                    })}
+                  >
+                    Settle Everything
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Settles all personal and group balances
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </Card>
 
       {/* UNIFIED LIST */}

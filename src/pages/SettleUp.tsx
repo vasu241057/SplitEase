@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { ArrowLeft, Loader2, Info } from "lucide-react"
 import { useData } from "../context/DataContext"
@@ -19,6 +19,7 @@ export function SettleUp() {
     (location.state?.defaultDirection as "paying" | "receiving") || "paying"
   )
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   
   console.log("[SettleUp] Render", {
       state: location.state,
@@ -78,15 +79,74 @@ export function SettleUp() {
         })
     : friends.map(f => ({ id: f.id, name: f.name, avatar: f.avatar, isGroupMember: false }));
 
+  // Compute balance and correct direction for BOTH group and personal modes
+  const balanceInfo = (() => {
+    if (!friendId) return null;
+    
+    // Find member to get their userId
+    const member = selectedGroup?.members.find(m => m.id === friendId);
+    const memberUserId = member?.userId;
+    
+    // Find friend by linked_user_id or id
+    const friend = friends.find(f => 
+      (memberUserId && f.linked_user_id === memberUserId) || f.id === friendId
+    );
+    
+    if (!friend?.group_breakdown) return null;
+    
+    if (groupId) {
+      // Group mode: find group balance
+      const breakdown = friend.group_breakdown.find(b => b.groupId === groupId);
+      if (!breakdown) return null;
+      return {
+        amount: breakdown.amount,
+        absolute: Math.abs(breakdown.amount),
+        correctDirection: breakdown.amount < 0 ? 'paying' : 'receiving'
+      };
+    } else {
+      // Personal mode: find personal balance
+      const breakdown = friend.group_breakdown.find(b => b.groupId === null);
+      if (!breakdown) return null;
+      return {
+        amount: breakdown.amount,
+        absolute: Math.abs(breakdown.amount),
+        correctDirection: breakdown.amount < 0 ? 'paying' : 'receiving'
+      };
+    }
+  })();
+
+  const maxBalance = balanceInfo?.absolute || null;
+  const correctDirection = balanceInfo?.correctDirection || null;
+
+  // 🔴 Issue #2 FIX: Parse amount once with useMemo to avoid NaN issues
+  const parsedAmount = useMemo(() => {
+    const parsed = parseFloat(amount);
+    return isNaN(parsed) ? 0 : parsed;
+  }, [amount]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
     if (!friendId || !amount) return
+    
+    // Validate basic input sanity (parsedAmount already computed via useMemo)
+    if (parsedAmount <= 0) {
+      setError("Please enter a valid positive amount");
+      return;
+    }
+
+    // 🔴 CRITICAL: Validate direction matches balance sign
+    if (correctDirection && direction !== correctDirection) {
+      const context = groupId ? 'this group' : 'personal expenses';
+      setError(`Invalid direction. You should be ${correctDirection} for ${context}.`);
+      return;
+    }
 
     setLoading(true)
     try {
         await settleUp(
           friendId,
-          parseFloat(amount),
+          parsedAmount,
           direction === "paying" ? "paid" : "received",
           groupId || undefined
         )
@@ -138,10 +198,11 @@ export function SettleUp() {
             type="button"
             className={cn(
               "flex-1 py-2 text-sm font-medium rounded-md transition-all",
-              direction === "paying" ? "bg-background shadow" : "text-muted-foreground"
+              direction === "paying" ? "bg-background shadow" : "text-muted-foreground",
+              correctDirection && direction !== "paying" && "opacity-50 cursor-not-allowed"
             )}
             onClick={() => setDirection("paying")}
-            disabled={loading}
+            disabled={loading || (correctDirection !== null && correctDirection !== "paying")}
           >
             I paid
           </button>
@@ -149,10 +210,11 @@ export function SettleUp() {
             type="button"
             className={cn(
               "flex-1 py-2 text-sm font-medium rounded-md transition-all",
-              direction === "receiving" ? "bg-background shadow" : "text-muted-foreground"
+              direction === "receiving" ? "bg-background shadow" : "text-muted-foreground",
+              correctDirection && direction !== "receiving" && "opacity-50 cursor-not-allowed"
             )}
             onClick={() => setDirection("receiving")}
-            disabled={loading}
+            disabled={loading || (correctDirection !== null && correctDirection !== "receiving")}
           >
             I received
           </button>
@@ -182,6 +244,23 @@ export function SettleUp() {
                       This amount reflects simplified group debts.<br/>
                       <span className="opacity-80">Simplification reduces payments but keeps totals unchanged.</span>
                   </p>
+              </div>
+          )}
+          {/* Overpay warning for settle-ups */}
+          {maxBalance !== null && parsedAmount > maxBalance + 0.01 && parsedAmount > 0 && (
+              <div className="flex items-start gap-2 mt-2 text-xs text-blue-600 dark:text-blue-400 animate-in fade-in bg-blue-50 dark:bg-blue-950/20 p-2 rounded border border-blue-200 dark:border-blue-800">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <p>
+                      <span className="font-semibold">You are overpaying by ₹{(parsedAmount - maxBalance).toFixed(2)}</span><br/>
+                      This will create a reverse balance {groupId ? 'in this group' : 'for personal expenses'} — they will owe you instead.
+                  </p>
+              </div>
+          )}
+          {/* Error message */}
+          {error && (
+              <div className="flex items-start gap-2 mt-2 text-xs text-red-600 animate-in fade-in">
+                  <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <p>{error}</p>
               </div>
           )}
         </div>

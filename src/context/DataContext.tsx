@@ -23,6 +23,7 @@ type DataContextType = {
   addFriend: (name: string, email?: string) => Promise<void>
   addGroup: (name: string, type: Group["type"], members: string[]) => Promise<void>
   settleUp: (friendId: string, amount: number, type: "paid" | "received", groupId?: string) => Promise<void>
+  settleUpTotal: (friendId: string, amount: number) => Promise<void>
   deleteExpense: (id: string) => Promise<void>
   deleteTransaction: (id: string) => Promise<void>
   restoreExpense: (id: string) => Promise<void>
@@ -118,6 +119,19 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   })
 
+  const settleUpTotalMutation = useMutation({
+    mutationFn: (data: { friendId: string, amount: number }) => {
+      console.log('[TOTAL SETTLE-UP] Called from frontend:', data);
+      return api.post('/api/transactions/settle-up-total', data);
+    },
+    onSuccess: () => {
+      console.log('[TOTAL SETTLE-UP] SUCCESS - Invalidating all queries');
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['friends'] })
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+    }
+  })
+
   const deleteTransactionMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/api/transactions/${id}`),
     onSuccess: () => {
@@ -183,6 +197,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       await settleUpMutation.mutateAsync({ friendId, amount, type, groupId })
   }, [settleUpMutation])
 
+  const settleUpTotal = React.useCallback(async (friendId: string, amount: number) => {
+      await settleUpTotalMutation.mutateAsync({ friendId, amount })
+  }, [settleUpTotalMutation])
+
   const deleteTransaction = React.useCallback(async (id: string) => {
       await deleteTransactionMutation.mutateAsync(id)
   }, [deleteTransactionMutation])
@@ -222,6 +240,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addFriend,
     addGroup,
     settleUp,
+    settleUpTotal,
     deleteExpense,
     deleteTransaction,
     restoreExpense,
@@ -232,7 +251,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     loading,
   }), [
     currentUser, friends, groups, expenses, allExpenses, transactions,
-    addExpense, addFriend, addGroup, settleUp, deleteExpense, 
+    addExpense, addFriend, addGroup, settleUp, settleUpTotal, deleteExpense, 
     deleteTransaction, restoreExpense, restoreTransaction, updateExpense,
     refreshGroups, refreshExpenses, loading
   ])
