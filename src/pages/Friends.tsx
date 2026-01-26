@@ -1,6 +1,6 @@
  
 import { useState, useMemo } from "react"
-import { Plus, Bell, X } from "lucide-react"
+import { Plus, Bell, X, ChevronDown, ChevronUp } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useData } from "../context/DataContext"
 import { useAuth } from "../context/AuthContext"
@@ -67,6 +67,23 @@ export function Friends() {
       return hasBalance; 
     });
   }, [friendsWithEffectiveBalance]);
+
+  // Separate unsettled and settled friends
+  const unsettledFriends = useMemo(() => 
+    visibleFriends
+      .filter(f => Math.abs(f.balance) > 0.01)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [visibleFriends]
+  );
+
+  const settledFriends = useMemo(() => 
+    visibleFriends
+      .filter(f => Math.abs(f.balance) <= 0.01)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [visibleFriends]
+  );
+
+  const [showSettledFriends, setShowSettledFriends] = useState(false);
 
   const totalOwed = visibleFriends
     .filter((f) => f.balance > 0)
@@ -143,82 +160,130 @@ export function Friends() {
                </div>
              </Card>
            ))
-        ) : visibleFriends.length === 0 ? (
+         ) : visibleFriends.length === 0 ? (
           <p className="text-muted-foreground text-center py-8">
             You haven't added any friends yet.
           </p>
-        ) : (
-          visibleFriends.map((friend) => (
-            <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
-              <Card className="p-4 hover:bg-accent/50 transition-colors">
-                <div className="flex items-start gap-4">
-                  <Avatar className="mt-1">
-                    <AvatarImage src={friend.avatar} />
-                    <AvatarFallback>
-                      {friend.name
-                        .split(" ")
-                        .map((n) => n[0])
-                        .join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start mb-2">
-                        <p className="font-medium truncate text-lg">{friend.name}</p>
-                        <div className="text-right">
-                             <p
-                                className={cn(
-                                    "text-xs font-medium mb-1",
-                                    friend.balance > 0 ? "text-green-600" : friend.balance < 0 ? "text-red-600" : "text-muted-foreground"
-                                )}
-                              >
-                                {friend.balance > 0 ? "owes you" : friend.balance < 0 ? "you owe" : "settled"}
-                              </p>
-                              <div
-                                className={cn(
-                                    "font-bold text-lg leading-none",
-                                    friend.balance > 0 ? "text-green-600" : friend.balance < 0 ? "text-red-600" : "text-muted-foreground"
-                                )}
-                              >
-                                {friend.balance !== 0 && `₹${Math.abs(friend.balance).toFixed(2)}`}
+         ) : (
+          <>
+            {/* Unsettled Friends - Primary Section */}
+            {unsettledFriends.map((friend) => (
+              <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
+                <Card className="p-4 hover:bg-accent/50 transition-colors">
+                  <div className="flex items-start gap-4">
+                    <Avatar className="mt-1">
+                      <AvatarImage src={friend.avatar} />
+                      <AvatarFallback>
+                        {friend.name
+                          .split(" ")
+                          .map((n) => n[0])
+                          .join("")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-2">
+                          <p className="font-medium truncate text-lg">{friend.name}</p>
+                          <div className="text-right">
+                               <p
+                                  className={cn(
+                                      "text-xs font-medium mb-1",
+                                      friend.balance > 0 ? "text-green-600" : "text-red-600"
+                                  )}
+                                >
+                                  {friend.balance > 0 ? "owes you" : "you owe"}
+                                </p>
+                                <div
+                                  className={cn(
+                                      "font-bold text-lg leading-none",
+                                      friend.balance > 0 ? "text-green-600" : "text-red-600"
+                                  )}
+                                >
+                                  ₹{Math.abs(friend.balance).toFixed(2)}
+                                </div>
+                          </div>
+                      </div>
+                      
+                      {/* Buckets Breakdown */}
+                      {(() => {
+                           // Use Backend Provided Breakdown and Sort by Magnitude
+                           const breakdown = [...(friend.group_breakdown || [])]
+                             .filter(item => Math.abs(item.amount) > 0.01) // Filter out zero entries
+                             .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+                           
+                           if (breakdown.length === 0) return null;
+
+                           // Rules: 1-3 = show all, >3 = show 2 + remaining
+                           const showAll = breakdown.length <= 3;
+                           const visibleBreakdown = showAll ? breakdown : breakdown.slice(0, 2);
+                           const remaining = breakdown.length - 2;
+
+                           return (
+                              <div className="space-y-1 mt-2">
+                                  {visibleBreakdown.map((item, idx) => (
+                                      <div key={idx} className="flex justify-between text-xs">
+                                          <span className="text-muted-foreground truncate max-w-[150px]">{item.name}</span>
+                                          <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
+                                              {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
+                                          </span>
+                                      </div>
+                                  ))}
+                                  {!showAll && remaining > 0 && (
+                                      <p className="text-xs text-muted-foreground italic">
+                                          + {remaining} more balances
+                                      </p>
+                                  )}
                               </div>
-                        </div>
+                           )
+                      })()}
                     </div>
-                    
-                    {/* Buckets Breakdown */}
-                    {(() => {
-                         // Use Backend Provided Breakdown and Sort by Magnitude
-                         const breakdown = [...(friend.group_breakdown || [])].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
-                         
-                         if (breakdown.length === 0) return null;
-
-                         // Rules: 1-3 = show all, >3 = show 2 + remaining
-                         const showAll = breakdown.length <= 3;
-                         const visibleBreakdown = showAll ? breakdown : breakdown.slice(0, 2);
-                         const remaining = breakdown.length - 2;
-
-                         return (
-                            <div className="space-y-1 mt-2">
-                                {visibleBreakdown.map((item, idx) => (
-                                    <div key={idx} className="flex justify-between text-xs">
-                                        <span className="text-muted-foreground truncate max-w-[150px]">{item.name}</span>
-                                        <span className={item.amount > 0 ? "text-green-600" : "text-red-600"}>
-                                            {item.amount > 0 ? "owes you" : "you owe"} ₹{Math.abs(item.amount).toFixed(2)}
-                                        </span>
-                                    </div>
-                                ))}
-                                {!showAll && remaining > 0 && (
-                                    <p className="text-xs text-muted-foreground italic">
-                                        + {remaining} more balances
-                                    </p>
-                                )}
-                            </div>
-                         )
-                    })()}
                   </div>
-                </div>
-              </Card>
-            </Link>
-          ))
+                </Card>
+              </Link>
+            ))}
+
+            {/* Settled Friends - Collapsible Section */}
+            {settledFriends.length > 0 && (
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowSettledFriends(!showSettledFriends)}
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full py-2"
+                >
+                  {showSettledFriends ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                  <span>{settledFriends.length} settled friend{settledFriends.length !== 1 ? 's' : ''}</span>
+                </button>
+                
+                {showSettledFriends && (
+                  <div className="space-y-3 mt-2">
+                    {settledFriends.map((friend) => (
+                      <Link key={friend.id} to={`/friends/${friend.id}`} className="block">
+                        <Card className="p-4 hover:bg-accent/50 transition-colors opacity-75">
+                          <div className="flex items-center gap-4">
+                            <Avatar>
+                              <AvatarImage src={friend.avatar} />
+                              <AvatarFallback>
+                                {friend.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{friend.name}</p>
+                            </div>
+                            <span className="text-sm text-muted-foreground">Settled</span>
+                          </div>
+                        </Card>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
       <FloatingAddExpense />

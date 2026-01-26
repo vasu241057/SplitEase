@@ -1333,125 +1333,86 @@ export const recalculateUserPersonalLedger = async (
 	console.log(`[RECALC_PERSONAL_N] Found ${expensesData.length} personal expenses for user`);
 
 	// ==========================================================================
-	// STEP 2: Derive participant set (N-PERSON)
+	// STEP 2: Fetch ALL User-Involved Friend Records (LEDGER-FIRST)
 	// ==========================================================================
-	const participants = new Set<string>();
-
-	expensesData.forEach((expense: any) => {
-		// Add payer
-		if (expense.payer_user_id) {
-			participants.add(expense.payer_user_id);
-		}
-		// Add split participants
-		expense.splits?.forEach((split: any) => {
-			if (split.user_id) {
-				participants.add(split.user_id);
-			}
-		});
-	});
-
-	console.log(`[RECALC_PERSONAL_N] Derived ${participants.size} participants from expenses:`, 
-		Array.from(participants).map(p => p.slice(-8)));
-
-	// ==========================================================================
-	// STEP 2.5: Fallback for Settle-Up-Only Scenarios
-	// ==========================================================================
-	// If no expenses exist but transactions might, derive participants from transactions.
-	// This ensures balances update correctly even when expenses = ∅.
-	if (participants.size === 0) {
-		console.log(`[RECALC_PERSONAL_N] No expense participants, checking for transaction-only scenario...`);
-		
-		// Fetch ALL friend records where this user is a party
-		// (We need to discover counterparties from transactions)
-		const { data: userFriends, error: userFriendsError } = await supabase
-			.from('friends')
-			.select('id, owner_id, linked_user_id')
-			.or(`owner_id.eq.${userId},linked_user_id.eq.${userId}`);
-		
-		if (userFriendsError) throw userFriendsError;
-		
-		const userFriendIds = (userFriends || []).map((f: any) => f.id);
-		
-		if (userFriendIds.length > 0) {
-			// Fetch personal transactions on these friend records
-			const { data: fallbackTxData, error: fallbackTxError } = await supabase
-				.from('transactions')
-				.select('type, amount, group_id, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
-				.is('group_id', null)
-				.in('type', ['paid', 'received'])
-				.eq('deleted', false)
-				.in('friend_id', userFriendIds);
-			
-			if (fallbackTxError) throw fallbackTxError;
-			
-			// Derive participants from transaction counterparties
-			(fallbackTxData || []).forEach((tx: any) => {
-				if (tx.created_by) participants.add(tx.created_by);
-				if (tx.friend?.owner_id) participants.add(tx.friend.owner_id);
-				if (tx.friend?.linked_user_id) participants.add(tx.friend.linked_user_id);
-			});
-			
-			console.log(`[RECALC_PERSONAL_N] Fallback: Found ${fallbackTxData?.length || 0} transactions, ` +
-				`derived ${participants.size} participants from transactions:`,
-				Array.from(participants).map(p => p.slice(-8)));
-		}
-		
-		// If STILL no participants (no expenses AND no transactions), truly nothing to do
-		if (participants.size === 0) {
-			console.log(`[RECALC_PERSONAL_N_COMPLETE] No participants found in expenses or transactions, nothing to recalculate`);
-			return;
-		}
-	}
-
-	// ==========================================================================
-	// STEP 3: Fetch required friend records
-	// ==========================================================================
-	// Fetch friend records where BOTH owner_id AND linked_user_id are in participants
-	const participantArray = Array.from(participants);
-
-	const { data: allParticipantFriends, error: friendsError } = await supabase
+	// ARCHITECTURAL PRINCIPLE: A ledger is a record of value transfer.
+	// Transactions are first-class ledger events.
+	// 
+	// CRITICAL: We fetch ALL friends where user is a party — this is the
+	// authoritative domain for personal ledger updates. We do NOT filter by
+	// "participants" because:
+	//   1. Deleted transaction counterparties must still be recalculated
+	//   2. Zero balances must be materialized to clear ghost balances
+	//   3. Friends with no current activity must have their personal entry cleared
+	
+	const { data: friendsData, error: friendsError } = await supabase
 		.from('friends')
 		.select('id, owner_id, linked_user_id, group_breakdown, balance')
-		.in('owner_id', participantArray)
-		.in('linked_user_id', participantArray);
+		.or(`owner_id.eq.${userId},linked_user_id.eq.${userId}`);
 
 	if (friendsError) throw friendsError;
 
-	// FIX BUG 2: Filter to ONLY friend records where userId is a party
-	// This prevents updating unrelated friend records (e.g., B↔C when recalculating for A)
-	const friendsData = (allParticipantFriends || []).filter(
-		(f: any) => f.owner_id === userId || f.linked_user_id === userId
-	);
+	console.log(`[RECALC_PERSONAL_N] Fetched ${friendsData?.length || 0} user-involved friends (ledger-first)`);
 
-	console.log(`[RECALC_PERSONAL_N] Fetched ${allParticipantFriends?.length || 0} participant friends, filtered to ${friendsData.length} user-involved friends`);
-
-	// ==========================================================================
-	// STEP 4: Fetch personal transactions involving this user
-	// ==========================================================================
-	// FIX BUG 1: Get friend IDs where userId is OWNER or LINKED (not just owned)
-	// This ensures we fetch transactions created by OTHER users that affect our balances
-	const userInvolvedFriendIds = friendsData.map((f: any) => f.id);
-
-	let transactionsData: any[] = [];
-	if (userInvolvedFriendIds.length > 0) {
-		const { data: txData, error: txError } = await supabase
-			.from('transactions')
-			.select('type, amount, group_id, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
-			.is('group_id', null)
-			.in('type', ['paid', 'received'])
-			.eq('deleted', false)
-			.in('friend_id', userInvolvedFriendIds);
-
-		if (txError) throw txError;
-		transactionsData = txData || [];
+	// Early exit if user has no friends
+	if (!friendsData || friendsData.length === 0) {
+		console.log(`[RECALC_PERSONAL_N_COMPLETE] No friends found, nothing to recalculate`);
+		return;
 	}
 
-	console.log(`[RECALC_PERSONAL_N] Found ${transactionsData.length} personal transactions on user-involved friends`);
+	// ==========================================================================
+	// STEP 3: Fetch Personal Transactions (ALWAYS, not conditional)
+	// ==========================================================================
+	// LEDGER-FIRST: Transactions are first-class. We ALWAYS fetch them for ALL
+	// user-involved friends, not as a fallback or conditional path.
+	
+	const allUserFriendIds = friendsData.map((f: any) => f.id);
+
+	const { data: transactionsData, error: txError } = await supabase
+		.from('transactions')
+		.select('type, amount, created_by, friend_id, friend:friends(owner_id, linked_user_id)')
+		.is('group_id', null)
+		.in('type', ['paid', 'received'])
+		.eq('deleted', false)
+		.in('friend_id', allUserFriendIds);
+
+	if (txError) throw txError;
+
+	console.log(`[RECALC_PERSONAL_N] Found ${transactionsData?.length || 0} personal transactions`);
+
+	// ==========================================================================
+	// STEP 4: Derive Participants (for logging/debugging only)
+	// ==========================================================================
+	// NOTE: This is NOT used for filtering. It's purely informational.
+	const participants = new Set<string>();
+
+	expensesData.forEach((expense: any) => {
+		if (expense.payer_user_id) participants.add(expense.payer_user_id);
+		expense.splits?.forEach((split: any) => {
+			if (split.user_id) participants.add(split.user_id);
+		});
+	});
+
+	(transactionsData || []).forEach((tx: any) => {
+		if (tx.created_by) participants.add(tx.created_by);
+		if (tx.friend?.owner_id) participants.add(tx.friend.owner_id);
+		if (tx.friend?.linked_user_id) participants.add(tx.friend.linked_user_id);
+	});
+
+	console.log(`[RECALC_PERSONAL_N] Participants (for logging): ${participants.size}`,
+		Array.from(participants).map(p => p.slice(-8)));
 
 	// ==========================================================================
 	// STEP 5: Run ledger replay using calculateBalancesForData
 	// ==========================================================================
-	const result = calculateBalancesForData(friendsData, expensesData, transactionsData);
+	// Pass ALL user-involved friends — this ensures all balances are computed,
+	// including zero balances for friends with no current activity.
+	
+	const result = calculateBalancesForData(
+		friendsData,
+		expensesData,
+		transactionsData || []
+	);
 
 	// Check for missing links (indicates data corruption)
 	if (result.missingLinks.size > 0) {
@@ -1459,7 +1420,7 @@ export const recalculateUserPersonalLedger = async (
 			reason: 'missing_friend_links',
 			userId,
 			missingLinks: Array.from(result.missingLinks),
-			participantCount: participants.size,
+			friendCount: friendsData.length,
 		});
 		throw new Error(
 			`[RECALC_PERSONAL_N_ERROR] Missing friend links detected: ${Array.from(result.missingLinks).join(', ')}. ` +
@@ -1472,28 +1433,30 @@ export const recalculateUserPersonalLedger = async (
 	// ==========================================================================
 	// STEP 6: Verify zero-sum invariant
 	// ==========================================================================
-	// For personal expenses scoped to one user, the sum should equal their net position
-	// But across ALL friend records updated, the bilateral pairs should sum to zero
 	let netSum = 0;
 	friendBalances.forEach((val) => (netSum += val));
-
 	console.log(`[RECALC_PERSONAL_N_AUDIT] Net Sum Check: ${netSum.toFixed(4)}`);
-	
-	// Note: For scoped personal recalc, we don't enforce zero-sum strictly because
-	// we're only looking at one user's perspective. The bilateral pairs will balance.
 
 	// ==========================================================================
-	// STEP 7: Write results to database (ATOMIC via RPC)
+	// STEP 7: Materialize balances for ALL friends (LEDGER-FIRST)
 	// ==========================================================================
+	// CRITICAL: We iterate over ALL friendsData, not just friendBalances.entries().
+	// This ensures:
+	//   1. Friends with computed balance = 0 have their personal entry removed
+	//   2. Friends not in friendBalances (no expenses/transactions) are still processed
+	//   3. Ghost balances are eliminated
 	
 	const friendUpdates: Array<{ friend_id: string; balance: number; group_breakdown: any[] }> = [];
 
-	Array.from(friendBalances.entries()).forEach(([friendId, balance]) => {
-		const roundedPersonalBalance = Math.round(balance * 100) / 100;
+	friendsData.forEach((friend: any) => {
+		const friendId = friend.id;
+		
+		// Get computed balance — default to 0 if not in result (no activity)
+		const computedBalance = friendBalances.get(friendId) || 0;
+		const roundedPersonalBalance = Math.round(computedBalance * 100) / 100;
 
 		// Get existing breakdown
-		const existingFriend = (friendsData || []).find((f: any) => f.id === friendId);
-		const existingBreakdown = existingFriend?.group_breakdown || [];
+		const existingBreakdown = friend.group_breakdown || [];
 
 		// Keep only group entries (filter out personal entries - groupId is null or 'personal')
 		const groupOnlyBreakdown = existingBreakdown.filter(
@@ -1509,7 +1472,8 @@ export const recalculateUserPersonalLedger = async (
 		// Build new breakdown: group entries + personal entry (if non-zero)
 		let newBreakdown = [...groupOnlyBreakdown];
 		
-		// Add personal entry if personal balance is non-zero
+		// LEDGER-FIRST: Add personal entry ONLY if balance is non-zero
+		// If balance is 0, we explicitly do NOT add a personal entry
 		if (Math.abs(roundedPersonalBalance) > 0.01) {
 			newBreakdown.push({
 				groupId: null,
@@ -1526,7 +1490,7 @@ export const recalculateUserPersonalLedger = async (
 		);
 		const roundedFinalBalance = Math.round(finalBalance * 100) / 100;
 
-		const oldBalance = existingFriend?.balance || 0;
+		const oldBalance = friend.balance || 0;
 		const balanceChanged = Math.abs(roundedFinalBalance - oldBalance) > 0.001;
 		const oldBreakdownJSON = JSON.stringify(existingBreakdown);
 		const newBreakdownJSON = JSON.stringify(newBreakdown);
@@ -1548,7 +1512,9 @@ export const recalculateUserPersonalLedger = async (
 		});
 	});
 
-	// Persist friend updates atomically via RPC
+	// ==========================================================================
+	// STEP 8: Atomic Write
+	// ==========================================================================
 	if (friendUpdates.length > 0) {
 		const { error: rpcError } = await supabase.rpc('update_friend_balances_atomic', {
 			p_updates: friendUpdates,
@@ -1567,5 +1533,5 @@ export const recalculateUserPersonalLedger = async (
 	}
 
 	console.log(`[RECALC_PERSONAL_N_SUCCESS] Recalculated personal ledger for user ${userId.slice(-8)}, ` +
-		`updated ${friendUpdates.length} friend records`);
+		`updated ${friendUpdates.length} friend records (ledger-first)`);
 };

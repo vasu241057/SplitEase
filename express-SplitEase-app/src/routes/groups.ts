@@ -100,9 +100,10 @@ router.use(authMiddleware);
 router.get('/', async (req, res) => {
   const supabase = createSupabaseClient();
   // 1. Get IDs of groups the user belongs to (via friends table linking)
+  // Note: is_active filter done in JS for backward compatibility before migration
   const { data: memberGroups, error: memberError } = await supabase
     .from('group_members')
-    .select('group_id, friends!inner(linked_user_id)')
+    .select('*, friends!inner(linked_user_id)')
     .eq('friends.linked_user_id', (req as any).user.id);
 
   console.log('[GET /groups] User ID:', (req as any).user?.id); // Keep log for verification
@@ -110,13 +111,17 @@ router.get('/', async (req, res) => {
 
   if (memberError) return res.status(500).json({ error: memberError.message });
 
-  const groupIds = memberGroups.map((mg: any) => mg.group_id);
+  // Filter to only active memberships (is_active !== false handles null/undefined before migration)
+  const activeMemberships = memberGroups.filter((mg: any) => mg.is_active !== false);
+  const groupIds = activeMemberships.map((mg: any) => mg.group_id);
 
   if (groupIds.length === 0) return res.json([]);
 
+  // Fetch group data with all members for display
+  // Note: is_active may not exist before migration, so we handle that in JS
   const { data: groups, error } = await supabase
     .from('groups')
-    .select('*, created_by, group_members(friends(id, name, avatar, linked_user_id, owner_id))') // Include created_by
+    .select('*, created_by, group_members(*, friends(id, name, avatar, linked_user_id, owner_id))') // Select all from group_members
     .in('id', groupIds);
     
   if (error) return res.status(500).json({ error: error.message });
@@ -128,12 +133,14 @@ router.get('/', async (req, res) => {
     createdBy: g.created_by, // Include creator ID for Admin badge
     simplifyDebtsEnabled: g.simplify_debts_enabled,
     currentUserBalance: g.user_balances ? (g.user_balances[currentUserId] || 0) : 0, // <-- Backend Logic
-    members: g.group_members.map((gm: any) => ({
-        id: gm.friends.id,
-        name: gm.friends.name,
-        avatar: gm.friends.avatar || '',
-        userId: gm.friends.linked_user_id
-    })) 
+    members: g.group_members
+        .filter((gm: any) => gm.is_active !== false) // Only active members for UI
+        .map((gm: any) => ({
+            id: gm.friends.id,
+            name: gm.friends.name,
+            avatar: gm.friends.avatar || '',
+            userId: gm.friends.linked_user_id
+        })) 
   }));
 
   res.json(formattedGroups);
@@ -249,11 +256,45 @@ router.post('/:id/members', async (req, res) => {
   const supabase = createSupabaseClient();
   const currentUserId = (req as any).user?.id;
 
-  const { error } = await supabase
-    .from('group_members')
-    .insert([{ group_id: id, friend_id: memberId }]);
+  // Check if this member already exists (active or soft-deleted)
+  // Using maybeSingle() to avoid throwing error when no row exists
+  // Note: group_members uses composite key (group_id, friend_id), not 'id'
+  const { data: existingMember, error: lookupError } = await supabase
+      .from('group_members')
+      .select('group_id, friend_id, is_active')
+      .eq('group_id', id)
+      .eq('friend_id', memberId)
+      .maybeSingle();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (lookupError) {
+      console.error('[Add Member] Lookup error:', lookupError);
+      return res.status(500).json({ error: lookupError.message });
+  }
+
+  if (existingMember) {
+      if (existingMember.is_active === false) {
+          // Re-activate former member (soft-deleted)
+          const { error: reactivateError } = await supabase
+              .from('group_members')
+              .update({ is_active: true, left_at: null })
+              .eq('group_id', id)
+              .eq('friend_id', memberId);
+          
+          if (reactivateError) return res.status(500).json({ error: reactivateError.message });
+          console.log(`[Member Rejoined] Re-activated member ${memberId} in group ${id}`);
+      } else {
+          // Already active member - no-op
+          console.log(`[Member Add] Member ${memberId} already active in group ${id}`);
+      }
+  } else {
+      // New member - insert
+      const { error } = await supabase
+          .from('group_members')
+          .insert([{ group_id: id, friend_id: memberId }]);
+
+      if (error) return res.status(500).json({ error: error.message });
+      console.log(`[Member Added] New member ${memberId} added to group ${id}`);
+  }
 
   // STEP 3: Ensure friend relationships with ALL members (including new one)
   // This MUST succeed before continuing
@@ -271,7 +312,7 @@ router.post('/:id/members', async (req, res) => {
 
   const { data: group, error: fetchError } = await supabase
     .from('groups')
-    .select('*, group_members(friends(id, name, avatar, linked_user_id))')
+    .select('*, group_members(*, friends(id, name, avatar, linked_user_id))') // Select * for backward compatibility
     .eq('id', id)
     .single();
     
@@ -279,12 +320,14 @@ router.post('/:id/members', async (req, res) => {
 
    const formattedGroup = {
     ...group,
-    members: group.group_members.map((gm: any) => ({
-        id: gm.friends.id,
-        name: gm.friends.name,
-        avatar: gm.friends.avatar || '',
-        userId: gm.friends.linked_user_id
-    }))
+    members: group.group_members
+        .filter((gm: any) => gm.is_active !== false) // Only active members for UI
+        .map((gm: any) => ({
+            id: gm.friends.id,
+            name: gm.friends.name,
+            avatar: gm.friends.avatar || '',
+            userId: gm.friends.linked_user_id
+        }))
   };
 
   // === GROUP INVITE NOTIFICATION ===
@@ -474,14 +517,16 @@ router.delete('/:id/members/:friendId', async (req, res) => {
         });
     }
 
-    // 5. Delete the member from the group
+    // 5. Soft-delete the member from the group (preserve for ledger replay)
     const { error } = await supabase
         .from('group_members')
-        .delete()
+        .update({ is_active: false, left_at: new Date().toISOString() })
         .eq('group_id', id)
         .eq('friend_id', friendId);
 
     if (error) return res.status(500).json({ error: error.message });
+
+    console.log(`[Member Removed] Soft-deleted member ${friendId} from group ${id}`);
 
     // 6. Cleanup stale data (user_balances, simplified_debts, friend breakdowns)
     if (linkedUserId) {
@@ -602,14 +647,16 @@ router.post('/:id/leave', async (req, res) => {
     }
 
 
-    // 3. Remove from Group Members
-    const { error: deleteError } = await supabase
+    // 3. Soft-delete from Group Members (preserve for ledger replay)
+    const { error: updateError } = await supabase
         .from('group_members')
-        .delete()
+        .update({ is_active: false, left_at: new Date().toISOString() })
         .eq('group_id', id)
-        .eq('friend_id', memberFriendId); // Remove the friend link
+        .eq('friend_id', memberFriendId);
 
-    if (deleteError) return res.status(500).json({ error: deleteError.message });
+    if (updateError) return res.status(500).json({ error: updateError.message });
+
+    console.log(`[Member Left] Soft-deleted member ${userId} from group ${id}`);
 
     // 4. Cleanup stale data (user_balances, simplified_debts, friend breakdowns)
     await cleanupAfterMemberExit(supabase, id, userId);

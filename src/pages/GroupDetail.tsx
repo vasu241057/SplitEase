@@ -506,19 +506,32 @@ export function GroupDetail() {
                         
                         {/* Right: Net Effect (two lines) */}
                         <div className="text-right shrink-0">
-                          {Math.abs(netEffect) < 0.01 ? (
-                            <p className="text-sm text-muted-foreground">Settled</p>
-                          ) : netEffect > 0 ? (
-                            <>
-                              <p className="text-sm text-green-600">You lent</p>
-                              <p className="text-base font-bold text-green-600">₹{netEffect.toFixed(0)}</p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="text-sm text-red-600">You borrowed</p>
-                              <p className="text-base font-bold text-red-600">₹{Math.abs(netEffect).toFixed(0)}</p>
-                            </>
-                          )}
+                          {(() => {
+                            // Determine if user is involved: in splits OR paid something
+                            const isInvolved = !!mySplit || myPaidAmount > 0;
+                            
+                            if (!isInvolved) {
+                              // Not in splits, didn't pay → "Not involved"
+                              return <p className="text-sm text-muted-foreground">Not involved</p>;
+                            } else if (Math.abs(netEffect) < 0.01) {
+                              // Participated but balance is 0 → "Settled"
+                              return <p className="text-sm text-muted-foreground">Settled</p>;
+                            } else if (netEffect > 0) {
+                              return (
+                                <>
+                                  <p className="text-sm text-green-600">You lent</p>
+                                  <p className="text-base font-bold text-green-600">₹{netEffect.toFixed(0)}</p>
+                                </>
+                              );
+                            } else {
+                              return (
+                                <>
+                                  <p className="text-sm text-red-600">You borrowed</p>
+                                  <p className="text-base font-bold text-red-600">₹{Math.abs(netEffect).toFixed(0)}</p>
+                                </>
+                              );
+                            }
+                          })()}
                         </div>
                       </div>
                     </Card>

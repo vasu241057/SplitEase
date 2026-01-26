@@ -272,7 +272,7 @@ router.post('/accept-invite', authMiddleware, async (req, res) => {
 
     if (addReceiverError) throw addReceiverError;
 
-    res.json({ success: true, friend: sender });
+    res.json({ success: true, friend: { ...sender, name: sender.full_name } });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
   }

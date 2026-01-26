@@ -45,7 +45,9 @@ export function FriendDetail() {
         id: b.groupId, // helper for keys (null for personal)
         isRouted // For UI Badge
       };
-    }).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
+    })
+    .filter(item => Math.abs(item.amount) > 0.01) // Filter out zero entries
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)); // Sort Absolute Descending (Magnitude)
   }, [friend?.group_breakdown]);
 
 
