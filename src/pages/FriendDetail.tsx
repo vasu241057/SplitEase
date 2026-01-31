@@ -253,48 +253,32 @@ export function FriendDetail() {
           const hasPersonalBalance = Math.abs(personalBalance) >= 0.01;
           const hasTotalBalance = Math.abs(friend.balance) >= 0.01;
           
+          // Determine helper text
+          let helperText = "";
+          if (!hasTotalBalance) {
+            helperText = "All settled";
+          } else if (!hasPersonalBalance && hasTotalBalance) {
+            helperText = "No personal balance — settles will apply to groups";
+          }
+          
           return (
-            <div className="flex flex-col gap-3 pt-2">
-              {/* Personal Settle-Up */}
-              <div className="flex flex-col items-center gap-2">
-                <Button 
-                  className="w-full max-w-xs"
-                  variant="outline"
-                  disabled={!hasPersonalBalance}
-                  onClick={() => navigate("/settle-up", { 
-                    state: { 
-                      friendId: friend.id,
-                      defaultDirection: personalBalance > 0 ? "receiving" : "paying",
-                      amount: Math.abs(personalBalance).toFixed(2)
-                    } 
-                  })}
-                >
-                  Settle Personal
-                </Button>
-                {!hasPersonalBalance && (
-                  <p className="text-xs text-muted-foreground">
-                    {friend.balance !== 0 ? "No personal balance — settle in groups" : "All settled"}
-                  </p>
-                )}
-              </div>
-
-              {/* Total Settle-Up */}
-              {hasTotalBalance && (
-                <div className="flex flex-col items-center gap-2">
-                  <Button 
-                    className="w-full max-w-xs"
-                    onClick={() => navigate("/settle-up-total", { 
-                      state: { 
-                        friendId: friend.id
-                      } 
-                    })}
-                  >
-                    Settle Everything
-                  </Button>
-                  <p className="text-xs text-muted-foreground text-center">
-                    Settles all personal and group balances
-                  </p>
-                </div>
+            <div className="flex flex-col items-center gap-2 pt-2">
+              <Button 
+                className="w-full max-w-xs"
+                disabled={!hasTotalBalance}
+                onClick={() => navigate("/settle-up", { 
+                  state: { 
+                    friendId: friend.id,
+                    entryMode: "friend-wall"
+                  } 
+                })}
+              >
+                Settle Up
+              </Button>
+              {helperText && (
+                <p className="text-xs text-muted-foreground text-center">
+                  {helperText}
+                </p>
               )}
             </div>
           );

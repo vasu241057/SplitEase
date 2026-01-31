@@ -11,7 +11,6 @@ import { GroupSettingsPage } from "./pages/GroupSettingsPage"
 import { GroupSpendingBreakdown } from "./pages/GroupSpendingBreakdown"
 import { AddExpense } from "./pages/AddExpense"
 import { SettleUp } from "./pages/SettleUp"
-import { SettleUpTotal } from "./pages/SettleUpTotal"
 import { ExpenseDetail } from "./pages/ExpenseDetail"
 import { CreateGroup } from "./pages/CreateGroup"
 import { TransactionDetail } from "./pages/TransactionDetail"
@@ -121,11 +120,13 @@ function AppRoutes() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/invite/:code" element={<AcceptInvite />} />
         
+        {/* SettleUp outside MainLayout - no bottom nav */}
+        <Route path="/settle-up" element={<RequireAuth><SettleUp /></RequireAuth>} />
+        
         <Route element={<RequireAuth><MainLayout /></RequireAuth>}>
           <Route path="/invite-friend" element={<InviteFriend />} />
           <Route path="/" element={<SmartHomeRedirect />} />
-          <Route path="/settle-up" element={<SettleUp />} />
-          <Route path="/settle-up-total" element={<SettleUpTotal />} />
+
           <Route path="/create-group" element={<CreateGroup />} />
           <Route path="/add-expense" element={<AddExpense />} />
           <Route path="/groups" element={<Groups />} />
