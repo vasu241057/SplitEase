@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate, useLocation } from "react-router-dom"
-import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet, Loader2, Check } from "lucide-react"
+import { ArrowLeft, Banknote, Plus, Search, Settings, X, Info, Wallet, Loader2, Check, TrendingUp } from "lucide-react"
 import { useData } from "../context/DataContext"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
@@ -46,9 +46,7 @@ export function GroupDetail() {
 
 
 
-  useEffect(() => {
-    // Audit logs removed
-  }, [group?.id, group?.simplifyDebtsEnabled, transactions, expenses, group?.name]);
+
 
   // Use shared hook for balances
   const { isGroupSettled } = useGroupBalance(group);
@@ -213,92 +211,7 @@ export function GroupDetail() {
     }
   }
 
-  // [DISCREPANCY_DEBUG] INSTRUMENTATION
-  if (group && !isGroupSettled && balancesRelativeToMe.length === 0) {
-     console.log('[DISCREPANCY_DEBUG] Checking Invariant...');
-     console.log('[DISCREPANCY_DEBUG] Trigger: Group NOT settled but Balances are EMPTY.');
-     console.log('[DISCREPANCY_DEBUG] Toggle State:', { simplifyDebts });
-     
-     // Log Group Context
-     console.log('[DISCREPANCY_DEBUG] Group Context:', {
-         id: group.id,
-         name: group.name,
-         currentUserBalance: group.currentUserBalance,
-         simplifyDebtsEnabled: group.simplifyDebtsEnabled,
-         simplifiedDebts: group.simplified_debts
-     });
 
-     // [NEW] Log all members with their IDs
-     console.log('[DISCREPANCY_DEBUG] Group Members:', group.members.map(m => ({
-         memberId: m.id,
-         userId: m.userId,
-         name: m.name
-     })));
-
-     // [NEW] Log all friends with their IDs and group_breakdown
-     console.log('[DISCREPANCY_DEBUG] All Friends (truncated):', friends.slice(0, 10).map(f => ({
-         friendId: f.id,
-         linkedUserId: f.linked_user_id,
-         name: f.name,
-         hasGroupBreakdown: !!f.group_breakdown,
-         groupBreakdownCount: f.group_breakdown?.length || 0,
-         groupBreakdown: f.group_breakdown?.map(b => ({
-             groupId: b.groupId,
-             name: b.name,
-             amount: b.amount
-         }))
-     })));
-
-     // [NEW] Trace the exact lookup for each member
-     console.log('[DISCREPANCY_DEBUG] Member → Friend Lookup Trace:');
-     group.members.forEach(m => {
-         const friendByMemberId = friends.find(f => f.id === m.id);
-         const friendByUserId = friends.find(f => f.id === m.userId);
-         const friendByLinkedUserId = friends.find(f => f.linked_user_id === m.userId);
-         
-         console.log(`  Member: ${m.name} (id: ${m.id}, userId: ${m.userId})`, {
-             matchBy_fId_eq_mId: friendByMemberId ? {
-                 friendId: friendByMemberId.id,
-                 breakdown: friendByMemberId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
-             } : 'NO_MATCH',
-             matchBy_fId_eq_mUserId: friendByUserId ? {
-                 friendId: friendByUserId.id,
-                 breakdown: friendByUserId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
-             } : 'NO_MATCH',
-             matchBy_fLinkedUserId_eq_mUserId: friendByLinkedUserId ? {
-                 friendId: friendByLinkedUserId.id,
-                 breakdown: friendByLinkedUserId.group_breakdown?.find(b => b.groupId === group.id) || 'NOT_FOUND'
-             } : 'NO_MATCH'
-         });
-     });
-
-     // Log Friend Breakdowns relevant to this group (original)
-     const memberBreakdowns = group.members.map(m => {
-        const friend = friends.find(f => f.id === m.id);
-        const breakdown = friend?.group_breakdown?.find(b => b.groupId === group.id);
-        return {
-            memberId: m.id,
-            name: m.name,
-            breakdown: breakdown || 'MISSING'
-        };
-     });
-     console.log('[DISCREPANCY_DEBUG] Friend Breakdowns (by f.id === m.id):', JSON.stringify(memberBreakdowns, null, 2));
-
-     // Audit Expenses
-     console.log('[DISCREPANCY_DEBUG] Auditing Group Expenses...');
-     groupExpenses.forEach(e => {
-         const sumSplits = e.splits.reduce((acc, s) => acc + (s.amount || 0), 0);
-         if (Math.abs(e.amount - sumSplits) > 0.01) {
-             console.log('[DISCREPANCY_DEBUG] FAILED EXPENSE FOUND:', {
-                 id: e.id,
-                 desc: e.description,
-                 amount: e.amount,
-                 sumSplits: sumSplits,
-                 delta: e.amount - sumSplits
-             });
-         }
-     });
-  }
 
   return (
     <div className="space-y-6 pb-20 relative min-h-screen"> 
@@ -411,8 +324,50 @@ export function GroupDetail() {
         )}
       </div>
 
+      {/* Action Card Strip */}
+      <div className="px-0 py-3 !mt-3 !mb-1">
+        <div className="flex gap-3">
+          {/* Settle Up Card */}
+          <button
+            type="button"
+            className={cn(
+              "flex-1 px-4 py-3 rounded-xl border transition-all active:scale-[0.98]",
+              "bg-gradient-to-br from-green-950/30 to-emerald-950/20 border-green-900/40 hover:border-green-700/60",
+              isGroupSettled && "opacity-60 pointer-events-none grayscale"
+            )}
+            onClick={() => setShowSettleUpModal(true)}
+            disabled={isGroupSettled}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 rounded-lg bg-green-900/40">
+                <Wallet className="w-4 h-4 text-green-400" />
+              </div>
+              <div className="flex-1 text-left">
+                <h3 className="text-sm font-medium">Settle up</h3>
+              </div>
+            </div>
+          </button>
+
+          {/* Total Spend Card */}
+          <button
+            type="button"
+            className="flex-1 px-4 py-3 rounded-xl border transition-all active:scale-[0.98] bg-gradient-to-br from-blue-950/30 to-indigo-950/20 border-blue-900/40 hover:border-blue-700/60"
+            onClick={() => navigate(`/groups/${id}/spending`)}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 rounded-lg bg-blue-900/40">
+                <TrendingUp className="w-4 h-4 text-blue-400" />
+              </div>
+              <div className="flex-1 text-left">
+                <h3 className="text-sm font-medium">Total spend</h3>
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
+
       {/* Activity List (Expenses + Transactions) */}
-      <div className="space-y-4 pb-24">
+      <div className="space-y-4 pb-24 !mt-3">
           {groupActivity.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <Banknote className="h-12 w-12 mb-4 opacity-20" />
@@ -747,6 +702,7 @@ export function GroupDetail() {
                          }
                      }
 
+                     const isSettled = Math.abs(balance) < 0.01;
                      const isOwe = balance < 0;
                      const amount = Math.abs(balance).toFixed(2);
                      
@@ -760,11 +716,23 @@ export function GroupDetail() {
                                 <div>
                                     <p className="font-medium">{member.name}</p>
                                     <div className="flex items-center gap-2">
-                                        <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
-                                            {isOwe ? "you owe" : "owes you"} ₹{amount}
-                                        </p>
-                                        {/* User Education: Why 0.00? */}
-                                        {simplifyDebts && !simplificationError && Math.abs(balance) < 0.01 && (
+                                        {isSettled ? (
+                                            <p className="text-sm text-muted-foreground font-medium">
+                                                Settled
+                                            </p>
+                                        ) : (
+                                            <p className={cn("text-sm", isOwe ? "text-red-500" : "text-green-500")}>
+                                                {isOwe ? "you owe" : "owes you"} ₹{amount}
+                                            </p>
+                                        )}
+                                        
+                                        {/* User Education: Why 0.00? Only show if NOT explicitly settled text (redundant) OR keep if helpful? 
+                                            Actually, if we show "Settled", the tooltip might still depend on simplifyDebts context.
+                                            But the request says: "Do not show an active “Settle” action... Clearly communicate that the user is already settled"
+                                            The rendered "Settled" text does that.
+                                            Let's keep the tooltip logic but make sure it doesn't break layout.
+                                        */}
+                                        {simplifyDebts && !simplificationError && isSettled && (
                                             <div className="group relative flex items-center">
                                                 <Info className="h-3 w-3 text-muted-foreground/50 cursor-help" />
                                                 <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-48 p-2 bg-popover text-popover-foreground text-xs rounded-md shadow-md border opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
@@ -775,18 +743,24 @@ export function GroupDetail() {
                                     </div>
                                 </div>
                             </div>
-                            <Button size="sm" onClick={() => {
-                                navigate("/settle-up", { 
-                                    state: { 
-                                        friendId: member.id,
-                                        groupId: group.id,
-                                        defaultDirection: isOwe ? "paying" : "receiving",
-                                        amount: Math.abs(balance).toFixed(2)
-                                    } 
-                                });
-                            }}>
-                                Settle
-                            </Button>
+                            {isSettled ? (
+                                <Button size="sm" disabled className="opacity-50 cursor-not-allowed">
+                                    Settled
+                                </Button>
+                            ) : (
+                                <Button size="sm" onClick={() => {
+                                    navigate("/settle-up", { 
+                                        state: { 
+                                            friendId: member.id,
+                                            groupId: group.id,
+                                            defaultDirection: isOwe ? "paying" : "receiving",
+                                            amount: Math.abs(balance).toFixed(2)
+                                        } 
+                                    });
+                                }}>
+                                    Settle
+                                </Button>
+                            )}
                         </Card>
                     )
                 })}

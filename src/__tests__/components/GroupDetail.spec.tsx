@@ -9,14 +9,17 @@ import { MemoryRouter } from 'react-router-dom';
 
 // Mock Icons
 vi.mock('lucide-react', () => ({
-    ArrowLeft: () => <div data-testid="icon-arrow-left" />,
-    Banknote: () => <div data-testid="icon-banknote" />,
-    Plus: () => <div data-testid="icon-plus" />,
-    Search: () => <div data-testid="icon-search" />,
-    Settings: () => <div data-testid="icon-settings" />,
-    X: () => <div data-testid="icon-x" />,
-    Info: () => <div data-testid="icon-info" />,
-    Wallet: () => <div data-testid="icon-wallet" />
+    ArrowLeft: () => <span data-testid="icon-arrow-left" />,
+    Banknote: () => <span data-testid="icon-banknote" />,
+    Plus: () => <span data-testid="icon-plus" />,
+    Search: () => <span data-testid="icon-search" />,
+    Settings: () => <span data-testid="icon-settings" />,
+    X: () => <span data-testid="icon-x" />,
+    Info: () => <span data-testid="icon-info" />,
+    Wallet: () => <span data-testid="icon-wallet" />,
+    TrendingUp: () => <span data-testid="icon-trending-up" />,
+    Loader2: () => <span data-testid="icon-loader-2" />,
+    Check: () => <span data-testid="icon-check" />
 }));
 
 // Mock API

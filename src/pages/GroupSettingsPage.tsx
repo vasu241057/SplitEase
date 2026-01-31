@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { ArrowLeft, X, Trash2, LogOut, UserPlus, Wallet, Users, Pencil, Check, Info, TrendingUp, ChevronRight, Loader2 } from "lucide-react"
+import { ArrowLeft, X, Trash2, LogOut, UserPlus, Users, Pencil, Check, Info, Loader2 } from "lucide-react"
 import { Label } from "../components/ui/label"
 import { useData } from "../context/DataContext"
 // DEPRECATED: useGroupBalance hook is no longer needed here
@@ -12,13 +12,12 @@ import { Button } from "../components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar"
 import { Input } from "../components/ui/input"
 import { cn } from "../utils/cn"
-import { calculateGroupSpendingSummary, formatCentsToRupees } from "../utils/spendingInsights"
 
 export function GroupSettingsPage() {
     const { id } = useParams<{ id: string }>()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const { groups, currentUser, refreshGroups, expenses } = useData()
+    const { groups, currentUser, refreshGroups } = useData()
     
     // Derived State
     const group = groups.find(g => g.id === id)
@@ -106,17 +105,6 @@ export function GroupSettingsPage() {
             setIsTogglingSimplify(false);
         }
     };
-
-    // Calculate group spending summary (read-only analytics)
-    const spendingSummary = useMemo(() => {
-        if (!group) return null;
-        const members = group.members.map(m => ({
-            id: m.id,
-            userId: m.userId || undefined,
-            name: m.name,
-        }));
-        return calculateGroupSpendingSummary(expenses, group.id, members);
-    }, [group, expenses]);
 
     // Handlers
     const handleSaveName = async () => {
@@ -340,27 +328,6 @@ export function GroupSettingsPage() {
                     </div>
                 </div>
 
-                {/* Spending Stats (Read-Only Analytics) */}
-                <div className="space-y-3">
-                    <h3 className="text-sm font-semibold text-muted-foreground uppercase flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4" /> Spending Stats
-                    </h3>
-                    <div 
-                        className="bg-card border rounded-lg p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors"
-                        onClick={() => navigate(`/groups/${id}/spending`)}
-                    >
-                        <div>
-                            <p className="text-sm text-muted-foreground">Total Group Spend</p>
-                            <p className="text-lg font-bold">
-                                ₹{spendingSummary ? formatCentsToRupees(spendingSummary.totalSpendCents) : "0"}
-                            </p>
-                        </div>
-                        <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <p className="text-xs text-muted-foreground px-1">
-                        Tap to see spending breakdown by member
-                    </p>
-                </div>
 
                 {/* Actions Section */}
                  <div className="space-y-3">
@@ -369,10 +336,6 @@ export function GroupSettingsPage() {
                     </h3>
                     
                     <div className="grid gap-2">
-                        <Button variant="outline" className="w-full justify-start h-12" onClick={() => navigate(`/groups/${id}`, { state: { action: 'settleUp' } })}>
-                            <Wallet className="h-5 w-5 mr-3 text-green-600" />
-                            <span className="flex-1 text-left">Settle Up</span>
-                        </Button>
                         
                         {canLeaveGroup ? (
                             <Button variant="outline" className="w-full justify-start h-12 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20" onClick={() => {
