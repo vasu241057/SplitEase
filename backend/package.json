@@ -1,10 +1,10 @@
 {
-	"name": "express-d1-app",
+	"name": "splitease-backend",
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
 		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
+		"dev": "wrangler dev --port 8787",
 		"start": "wrangler dev",
 		"test": "vitest run -c vitest.unit.config.ts",
 		"test:worker": "vitest run -c vitest.config.mts",

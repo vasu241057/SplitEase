@@ -1,1 +1,1 @@
-./scripts/ci_check.sh
+./frontend/scripts/ci_check.sh
