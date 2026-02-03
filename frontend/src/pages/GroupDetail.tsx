@@ -332,15 +332,16 @@ export function GroupDetail() {
             type="button"
             className={cn(
               "flex-1 px-4 py-3 rounded-xl border transition-all active:scale-[0.98]",
-              "bg-gradient-to-br from-green-950/30 to-emerald-950/20 border-green-900/40 hover:border-green-700/60",
+              "bg-gradient-to-br from-green-100 to-emerald-100 border-green-300 hover:border-green-400",
+              "dark:from-green-950/30 dark:to-emerald-950/20 dark:border-green-900/40 dark:hover:border-green-700/60",
               isGroupSettled && "opacity-60 pointer-events-none grayscale"
             )}
             onClick={() => setShowSettleUpModal(true)}
             disabled={isGroupSettled}
           >
             <div className="flex items-center gap-3">
-              <div className="p-1.5 rounded-lg bg-green-900/40">
-                <Wallet className="w-4 h-4 text-green-400" />
+              <div className="p-1.5 rounded-lg bg-green-200 dark:bg-green-900/40">
+                <Wallet className="w-4 h-4 text-green-700 dark:text-green-400" />
               </div>
               <div className="flex-1 text-left">
                 <h3 className="text-sm font-medium">Settle up</h3>
@@ -351,12 +352,16 @@ export function GroupDetail() {
           {/* Total Spend Card */}
           <button
             type="button"
-            className="flex-1 px-4 py-3 rounded-xl border transition-all active:scale-[0.98] bg-gradient-to-br from-blue-950/30 to-indigo-950/20 border-blue-900/40 hover:border-blue-700/60"
+            className={cn(
+              "flex-1 px-4 py-3 rounded-xl border transition-all active:scale-[0.98]",
+              "bg-gradient-to-br from-blue-100 to-indigo-100 border-blue-300 hover:border-blue-400",
+              "dark:from-blue-950/30 dark:to-indigo-950/20 dark:border-blue-900/40 dark:hover:border-blue-700/60"
+            )}
             onClick={() => navigate(`/groups/${id}/spending`)}
           >
             <div className="flex items-center gap-3">
-              <div className="p-1.5 rounded-lg bg-blue-900/40">
-                <TrendingUp className="w-4 h-4 text-blue-400" />
+              <div className="p-1.5 rounded-lg bg-blue-200 dark:bg-blue-900/40">
+                <TrendingUp className="w-4 h-4 text-blue-700 dark:text-blue-400" />
               </div>
               <div className="flex-1 text-left">
                 <h3 className="text-sm font-medium">Total spend</h3>
